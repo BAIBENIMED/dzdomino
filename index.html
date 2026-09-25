@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DZ Domino</title>
+<meta name="description" content="Jeu de dominos double-six : 1 contre 1 ou 2 contre 2 contre l'ordinateur.">
+<style>
+:root{
+  --bg:#0d1611; --panel:#13221a; --panel-2:#1a2e23; --line:rgba(255,255,255,.09);
+  --felt:#1d6a44; --felt-2:#154f33;
+  --text:#eef3ee; --muted:#9db3a5; --accent:#f2c14e; --accent-2:#e9a93b; --danger:#e76f51; --ok:#6fcf97;
+  --tile:#fbf7ec; --tile-edge:#cdc3a8; --pip:#1c1c1c; --back:#8c2f39; --back-2:#6d222b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;display:flex;flex-direction:column;min-height:100vh}
+button{font:inherit;cursor:pointer}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.15rem;letter-spacing:.3px}
+.brand svg{width:22px;height:34px}
+.brand small{font-weight:500;color:var(--muted);font-size:.8rem}
+.scores{display:flex;gap:8px;align-items:center;font-size:.92rem}
+.score{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:5px 10px;display:flex;gap:8px;align-items:baseline}
+.score b{font-size:1.1rem;color:var(--accent);font-variant-numeric:tabular-nums}
+.score.target{color:var(--muted)}
+.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-weight:600}
+.btn:hover{border-color:rgba(255,255,255,.25)}
+.btn.primary{background:var(--accent);color:#1d1606;border-color:transparent}
+.btn.primary:hover{background:var(--accent-2)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+main{flex:1;display:flex;flex-direction:column;gap:10px;padding:12px 16px 16px;max-width:1200px;width:100%;margin:0 auto}
+.table{background:radial-gradient(ellipse at center,var(--felt) 0%,var(--felt-2) 100%);border-radius:18px;border:6px solid #3b2a1a;box-shadow:inset 0 0 40px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.35);padding:10px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:340px}
+.mid{flex:1;display:flex;gap:8px;min-height:0}
+.board{flex:1;position:relative;min-height:260px}
+.board svg{position:absolute;inset:0;width:100%;height:100%}
+.board .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.55);font-size:.95rem;text-align:center;padding:12px}
+
+.seat{display:flex;align-items:center;gap:8px;color:var(--text);font-size:.85rem;padding:4px 8px;border-radius:10px;border:1px solid transparent;transition:background .2s,border-color .2s}
+.seat.top{justify-content:center}
+.seat.side{flex-direction:column;justify-content:center;width:64px;text-align:center}
+.seat.hidden{display:none}
+.seat.active{background:rgba(242,193,78,.14);border-color:rgba(242,193,78,.55)}
+.seat .name{font-weight:700;white-space:nowrap}
+.seat .count{background:rgba(0,0,0,.3);border-radius:999px;padding:1px 8px;font-size:.78rem;font-variant-numeric:tabular-nums}
+.backs{display:flex;gap:3px;flex-wrap:wrap;justify-content:center}
+.seat.side .backs{flex-direction:column;align-items:center}
+.back{width:14px;height:26px;border-radius:3px;background:linear-gradient(135deg,var(--back),var(--back-2));border:1px solid rgba(0,0,0,.35)}
+.seat.side .back{width:24px;height:12px}
+.reveal{display:flex;gap:3px;flex-wrap:wrap;justify-content:center}
+.reveal svg{width:16px;height:32px}
+.seat.side .reveal{flex-direction:column;align-items:center}
+
+.me{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.me.active{border-color:rgba(242,193,78,.6)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.status{font-weight:600;min-height:1.4em}
+.status.warn{color:var(--accent)}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.info{color:var(--muted);font-size:.82rem}
+.hand{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;min-height:92px}
+.hand button{background:none;border:none;padding:0;border-radius:8px;transition:transform .15s,filter .15s;position:relative}
+.hand button svg{width:44px;height:88px;display:block;filter:drop-shadow(0 3px 3px rgba(0,0,0,.4))}
+.hand button.playable{transform:translateY(-6px)}
+.hand button.playable::after{content:"";position:absolute;left:4px;right:4px;bottom:-8px;height:3px;border-radius:2px;background:var(--accent)}
+.hand button.selected{transform:translateY(-12px)}
+.hand button.selected svg{filter:drop-shadow(0 0 6px var(--accent))}
+.hand button.dim{filter:brightness(.72)}
+.hand button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.shake{animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.log{color:var(--muted);font-size:.8rem;display:flex;flex-direction:column;gap:2px;max-height:4.4em;overflow:hidden}
+
+/* SVG pieces */
+.face{fill:var(--tile);stroke:var(--tile-edge);stroke-width:.04}
+.shadow{fill:rgba(0,0,0,.28)}
+.div{stroke:#a39a82;stroke-width:.035}
+.pip{fill:var(--pip)}
+.tile.last .face{stroke:var(--accent);stroke-width:.09}
+.marker{cursor:pointer}
+.marker circle{fill:rgba(242,193,78,.25);stroke:var(--accent);stroke-width:.08;animation:pulse 1s infinite alternate}
+.marker text{fill:#fff;font-size:.62px;font-weight:800;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+@keyframes pulse{from{opacity:.55}to{opacity:1}}
+
+/* Modal */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
+.overlay.hidden{display:none}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;max-width:460px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.modal h2{margin:0 0 6px;font-size:1.35rem}
+.modal p{margin:6px 0;color:var(--muted);line-height:1.45}
+.opt{margin:14px 0}
+.opt label.t{display:block;font-weight:700;margin-bottom:6px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1;min-width:90px;background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:9px 10px;font-weight:600}
+.seg button.on{border-color:var(--accent);background:rgba(242,193,78,.15);color:var(--accent)}
+.modal .row{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+details{margin-top:10px;color:var(--muted);font-size:.88rem}
+details summary{cursor:pointer;color:var(--text);font-weight:600}
+details ul{padding-left:18px;margin:8px 0;line-height:1.5}
+.result-scores{display:flex;gap:10px;margin:12px 0}
+.result-scores div{flex:1;background:var(--panel-2);border-radius:12px;padding:10px;text-align:center}
+.result-scores b{display:block;font-size:1.5rem;color:var(--accent)}
+.big{font-size:1.1rem;color:var(--text)!important}
+
+@media (max-width:640px){
+  header{padding:8px 12px}
+  main{padding:8px 10px 12px}
+  .table{border-width:4px;padding:6px;min-height:300px}
+  .board{min-height:220px}
+  .seat.side{width:44px;font-size:.72rem}
+  .hand{gap:5px}
+  .hand button svg{width:36px;height:72px}
+  .score{padding:4px 8px}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 1 2" aria-hidden="true"><rect x=".04" y=".04" width=".92" height="1.92" rx=".14" fill="#fbf7ec"/><line x1=".14" y1="1" x2=".86" y2="1" stroke="#a39a82" stroke-width=".05"/><circle cx=".5" cy=".5" r=".1" fill="#1c1c1c"/><circle cx=".28" cy="1.28" r=".09" fill="#1c1c1c"/><circle cx=".72" cy="1.72" r=".09" fill="#1c1c1c"/></svg>
+    <span>DZ Domino <small id="modeLabel"></small></span>
+  </div>
+  <div class="scores">
+    <div class="score"><span id="s0name">Toi</span><b id="s0">0</b></div>
+    <div class="score"><span id="s1name">Ordi</span><b id="s1">0</b></div>
+    <div class="score target">Objectif <b id="target">100</b></div>
+  </div>
+  <button class="btn" id="btnNew">Nouvelle partie</button>
+</header>
+
+<main>
+  <div class="table">
+    <div class="seat top" id="seat-top"></div>
+    <div class="mid">
+      <div class="seat side hidden" id="seat-left"></div>
+      <div class="board" id="board"></div>
+      <div class="seat side hidden" id="seat-right"></div>
+    </div>
+  </div>
+
+  <section class="me" id="me">
+    <div class="bar">
+      <div class="status" id="status">Bienvenue !</div>
+      <div class="actions">
+        <button class="btn" id="btnLeft" hidden></button>
+        <button class="btn" id="btnRight" hidden></button>
+        <button class="btn primary" id="btnDraw" hidden>Piocher</button>
+        <button class="btn primary" id="btnPass" hidden>Passer</button>
+      </div>
+    </div>
+    <div class="hand" id="hand" aria-label="Ta main"></div>
+    <div class="bar">
+      <div class="log" id="log"></div>
+      <div class="info" id="pile"></div>
+    </div>
+  </section>
+</main>
+
+<!-- Setup -->
+<div class="overlay" id="setup">
+  <div class="modal" role="dialog" aria-labelledby="setupTitle">
+    <h2 id="setupTitle">DZ Domino</h2>
+    <p>Dominos double-six, à l'algérienne. Joue contre l'ordinateur ou en équipe.</p>
+    <div class="opt">
+      <label class="t">Mode de jeu</label>
+      <div class="seg" id="optMode">
+        <button data-v="1v1" class="on">1 contre 1</button>
+        <button data-v="2v2">2 contre 2</button>
+      </div>
+    </div>
+    <div class="opt">
+      <label class="t">Partie en</label>
+      <div class="seg" id="optTarget">
+        <button data-v="50">50 pts</button>
+        <button data-v="100" class="on">100 pts</button>
+        <button data-v="150">150 pts</button>
+      </div>
+    </div>
+    <details>
+      <summary>Règles</summary>
+      <ul>
+        <li>28 dominos, 7 par joueur.</li>
+        <li>1ʳᵉ manche : celui qui a le plus gros double commence avec ce double. Ensuite, le gagnant de la manche commence.</li>
+        <li>On pose un domino dont un côté correspond à un bout de la chaîne.</li>
+        <li>1 contre 1 : si tu ne peux pas jouer, tu pioches. Pioche vide : tu passes.</li>
+        <li>2 contre 2 : pas de pioche. Ton partenaire est en face de toi.</li>
+        <li>Le premier qui pose tous ses dominos gagne la manche et marque les points restant chez l'adversaire.</li>
+        <li>Jeu bloqué : le camp avec le moins de points en main gagne la manche.</li>
+      </ul>
+    </details>
+    <div class="row"><button class="btn primary" id="btnStart">Jouer</button></div>
+  </div>
+</div>
+
+<!-- Round result -->
+<div class="overlay hidden" id="result">
+  <div class="modal" role="dialog" aria-labelledby="resTitle">
+    <h2 id="resTitle"></h2>
+    <p id="resText" class="big"></p>
+    <div class="result-scores">
+      <div><span id="r0name"></span><b id="r0"></b></div>
+      <div><span id="r1name"></span><b id="r1"></b></div>
+    </div>
+    <p id="resSub"></p>
+    <div class="row">
+      <button class="btn" id="btnSeeBoard">Voir la table</button>
+      <button class="btn primary" id="btnNext"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+
+const PIPS = {
+  0: [], 1: [[.5,.5]], 2: [[.27,.27],[.73,.73]], 3: [[.27,.27],[.5,.5],[.73,.73]],
+  4: [[.27,.27],[.73,.27],[.27,.73],[.73,.73]],
+  5: [[.27,.27],[.73,.27],[.5,.5],[.27,.73],[.73,.73]],
+  6: [[.28,.24],[.28,.5],[.28,.76],[.72,.24],[.72,.5],[.72,.76]]
+};
+
+const S = {
+  mode: '1v1', target: 100,
+  players: [], hands: [], boneyard: [],
+  origin: null, leftArm: [], rightArm: [],
+  turn: 0, passes: 0, scores: [0,0], forced: null,
+  lastWinner: null, roundOver: true, matchOver: false,
+  selected: null, lastId: 0, idSeq: 0, log: [], timer: null
+};
+
+/* ---------- Helpers ---------- */
+function allTiles(){ const t=[]; for(let a=0;a<=6;a++) for(let b=a;b<=6;b++) t.push([a,b]); return t; }
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+const pips = hand => hand.reduce((s,t)=>s+t[0]+t[1],0);
+const isDouble = t => t[0]===t[1];
+const name = p => S.players[p].name;
+const subj = p => p===0 ? 'Tu' : S.players[p].name;
+const team = p => S.players[p].team;
+const fmt = t => `${t[0]}|${t[1]}`;
+
+function leftEnd(){ return S.leftArm.length ? S.leftArm[S.leftArm.length-1].outer : S.origin.a; }
+function rightEnd(){ return S.rightArm.length ? S.rightArm[S.rightArm.length-1].outer : S.origin.b; }
+function endVal(side){ return side==='L' ? leftEnd() : rightEnd(); }
+
+function addLog(msg){ S.log.unshift(msg); S.log = S.log.slice(0,3); }
+
+/* ---------- Rules ---------- */
+function legalMoves(p){
+  const hand = S.hands[p], moves = [];
+  if(!S.origin){
+    if(S.forced && hand.includes(S.forced)) return [{tile:S.forced, side:'C'}];
+    return hand.map(tile => ({tile, side:'C'}));
+  }
+  const L = leftEnd(), R = rightEnd();
+  for(const tile of hand){
+    const fitsL = tile[0]===L || tile[1]===L;
+    const fitsR = tile[0]===R || tile[1]===R;
+    if(fitsL) moves.push({tile, side:'L'});
+    if(fitsR && !(fitsL && L===R)) moves.push({tile, side:'R'});
+  }
+  return moves;
+}
+
+function place(tile, side){
+  const id = ++S.idSeq; S.lastId = id;
+  if(side==='C'){ S.origin = {a:tile[0], b:tile[1], id}; return; }
+  const e = endVal(side);
+  const inner = tile[0]===e ? tile[0] : tile[1];
+  const outer = tile[0]===e ? tile[1] : tile[0];
+  (side==='L' ? S.leftArm : S.rightArm).push({inner, outer, id});
+}
+
+function doPlay(p, tile, side){
+  const hand = S.hands[p];
+  hand.splice(hand.indexOf(tile), 1);
+  place(tile, side);
+  S.passes = 0; S.selected = null; S.forced = null;
+  addLog(`${subj(p)} ${p===0?'poses':'pose'} ${fmt(tile)}.`);
+  if(hand.length===0){ render(); endRound(p, 'domino'); return; }
+  S.turn = (p+1) % S.players.length;
+  render();
+  nextTurn();
+}
+
+function doPass(p){
+  S.passes++;
+  addLog(`${subj(p)} ${p===0?'passes':'passe'}.`);
+  if(S.passes >= S.players.length){ render(); endRound(null, 'bloque'); return; }
+  S.turn = (p+1) % S.players.length;
+  render();
+  nextTurn();
+}
+
+function draw(p){
+  const t = S.boneyard.pop();
+  S.hands[p].push(t);
+  return t;
+}
+
+/* ---------- AI ---------- */
+function chooseAI(p, moves){
+  const hand = S.hands[p];
+  let best = null, bs = -Infinity;
+  for(const m of moves){
+    const [a,b] = m.tile;
+    let s = a + b + (a===b ? 6 : 0);
+    if(m.side !== 'C'){
+      const e = endVal(m.side);
+      const newEnd = a===e ? b : a;
+      const rest = hand.filter(t => t!==m.tile);
+      s += 3 * rest.filter(t => t[0]===newEnd || t[1]===newEnd).length;
+      // En équipe : éviter d'ouvrir un bout que l'adversaire suivant semble ne pas avoir
+      if(S.mode==='2v2'){
+        const nxt = (p+1)%4;
+        if(S.players[nxt].lacks && S.players[nxt].lacks.has(newEnd)) s += 4;
+      }
+    }
+    s += Math.random()*2;
+    if(s > bs){ bs = s; best = m; }
+  }
+  return best;
+}
+
+function aiTurn(p){
+  if(S.roundOver) return;
+  let moves = legalMoves(p);
+  let drawn = 0;
+  while(!moves.length && S.boneyard.length){ draw(p); drawn++; moves = legalMoves(p); }
+  if(drawn) addLog(`${name(p)} pioche ${drawn} domino${drawn>1?'s':''}.`);
+  if(!moves.length){
+    if(S.origin){ const lk = S.players[p].lacks; lk.add(leftEnd()); lk.add(rightEnd()); }
+    doPass(p); return;
+  }
+  const m = chooseAI(p, moves);
+  doPlay(p, m.tile, m.side);
+}
+
+/* ---------- Flow ---------- */
+function nextTurn(){
+  clearTimeout(S.timer);
+  if(S.roundOver) return;
+  const p = S.turn;
+  if(S.players[p].human){ render(); return; }
+  S.timer = setTimeout(() => aiTurn(p), 800);
+}
+
+function newMatch(){
+  const two = S.mode==='2v2';
+  S.players = two ? [
+    {name:'Toi', human:true, team:0, seat:'bottom'},
+    {name:'Karim', team:1, seat:'right'},
+    {name:'Amine (partenaire)', short:'Amine', team:0, seat:'top'},
+    {name:'Yasmine', team:1, seat:'left'}
+  ] : [
+    {name:'Toi', human:true, team:0, seat:'bottom'},
+    {name:"L'ordinateur", short:'Ordi', team:1, seat:'top'}
+  ];
+  S.scores = [0,0]; S.lastWinner = null; S.matchOver = false; S.log = [];
+  $('s0name').textContent = two ? 'Nous' : 'Toi';
+  $('s1name').textContent = two ? 'Eux' : 'Ordi';
+  $('target').textContent = S.target;
+  $('modeLabel').textContent = two ? '· 2 contre 2' : '· 1 contre 1';
+  newRound();
+}
+
+function newRound(){
+  clearTimeout(S.timer);
+  const n = S.players.length;
+  const deck = shuffle(allTiles());
+  S.hands = S.players.map(() => deck.splice(0,7));
+  S.boneyard = S.mode==='1v1' ? deck : [];
+  S.origin = null; S.leftArm = []; S.rightArm = [];
+  S.passes = 0; S.selected = null; S.roundOver = false; S.forced = null;
+  S.players.forEach(pl => pl.lacks = new Set());
+  S.hands[0].sort((x,y) => (x[0]-y[0]) || (x[1]-y[1]));
+
+  if(S.lastWinner === null){
+    // Plus gros double, sinon plus gros domino
+    let bestP = 0, bestT = null, bestScore = -1;
+    for(let p=0;p<n;p++) for(const t of S.hands[p]){
+      const sc = isDouble(t) ? 100 + t[0] : t[0]+t[1] + (Math.max(...t)/10);
+      if(sc > bestScore){ bestScore = sc; bestP = p; bestT = t; }
+    }
+    S.turn = bestP; S.forced = bestT;
+    addLog(`${subj(bestP)} ${bestP===0?'commences':'commence'} avec ${fmt(bestT)}.`);
+  } else {
+    S.turn = S.lastWinner;
+    addLog(`Nouvelle manche : ${subj(S.turn)} ${S.turn===0?'commences':'commence'}.`);
+  }
+  render();
+  nextTurn();
+}
+
+function endRound(winner, reason){
+  S.roundOver = true; clearTimeout(S.timer);
+  const n = S.players.length;
+  const teamPips = [0,0];
+  for(let p=0;p<n;p++) teamPips[team(p)] += pips(S.hands[p]);
+  let winTeam = null, points = 0, title = '', text = '';
+  const two = S.mode==='2v2';
+  const teamName = t => two ? (t===0 ? 'Votre équipe' : "L'équipe adverse") : (t===0 ? 'Tu' : "L'ordinateur");
+
+  if(reason==='domino'){
+    winTeam = team(winner);
+    points = teamPips[1-winTeam];
+    S.lastWinner = winner;
+    text = winner===0 ? `Domino ! Tu as posé tous tes dominos.` : `${name(winner)} a posé tous ses dominos.`;
+  } else {
+    text = `Jeu bloqué. Points en main : ${two?'nous':'toi'} ${teamPips[0]}, ${two?'eux':'ordi'} ${teamPips[1]}.`;
+    if(teamPips[0] !== teamPips[1]){
+      winTeam = teamPips[0] < teamPips[1] ? 0 : 1;
+      points = teamPips[1-winTeam];
+      // Le joueur du camp gagnant avec le moins de points commence
+      let bp = null;
+      for(let p=0;p<n;p++) if(team(p)===winTeam && (bp===null || pips(S.hands[p]) < pips(S.hands[bp]))) bp = p;
+      S.lastWinner = bp;
+    }
+  }
+  if(winTeam !== null) S.scores[winTeam] += points;
+
+  const won = winTeam === 0;
+  if(winTeam === null) title = 'Égalité, personne ne marque';
+  else if(two) title = won ? 'Votre équipe gagne la manche !' : "L'équipe adverse gagne la manche";
+  else title = won ? 'Tu gagnes la manche !' : "L'ordinateur gagne la manche";
+  const sub = winTeam===null ? '' : `${teamName(winTeam)} ${two||winTeam===1?'marque':'marques'} ${points} point${points>1?'s':''}.`;
+
+  const matchWin = S.scores.findIndex(s => s >= S.target);
+  let nextLabel = 'Manche suivante';
+  let subExtra = '';
+  if(matchWin !== -1){
+    S.matchOver = true;
+    nextLabel = 'Rejouer';
+    subExtra = matchWin===0 ? ' 🏆 Victoire ! Tu remportes la partie.' : ' Défaite… L\'adversaire remporte la partie.';
+  }
+  render();
+  setTimeout(() => {
+    $('resTitle').textContent = S.matchOver ? (matchWin===0 ? 'Victoire !' : 'Défaite') : title;
+    $('resText').textContent = text;
+    $('r0name').textContent = two ? 'Nous' : 'Toi';
+    $('r1name').textContent = two ? 'Eux' : 'Ordi';
+    $('r0').textContent = S.scores[0];
+    $('r1').textContent = S.scores[1];
+    $('resSub').textContent = sub + subExtra;
+    $('btnNext').textContent = nextLabel;
+    $('result').classList.remove('hidden');
+  }, 700);
+}
+
+/* ---------- Human input ---------- */
+function onHandClick(tile, btn){
+  if(S.roundOver || S.turn!==0) return;
+  const moves = legalMoves(0).filter(m => m.tile===tile);
+  if(!moves.length){
+    btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake');
+    setStatus(S.origin ? `${fmt(tile)} ne va sur aucun bout (${leftEnd()} ou ${rightEnd()}).` : `Tu dois commencer avec ${fmt(S.forced)}.`, true);
+    return;
+  }
+  if(moves.length===1){ doPlay(0, tile, moves[0].side); return; }
+  S.selected = (S.selected===tile) ? null : tile;
+  render();
+}
+
+function playSelected(side){
+  if(!S.selected) return;
+  doPlay(0, S.selected, side);
+}
+
+function humanDraw(){
+  if(S.roundOver || S.turn!==0 || legalMoves(0).length || !S.boneyard.length) return;
+  const t = draw(0);
+  addLog(`Tu pioches ${fmt(t)}.`);
+  render();
+}
+
+/* ---------- Rendering ---------- */
+function tileSVG(it, cls=''){
+  const {x,y,w,h,v1,v2} = it, horiz = w > h;
+  let s = `<g class="tile ${cls}">`;
+  s += `<rect class="shadow" x="${x+.08}" y="${y+.1}" width="${w-.08}" height="${h-.08}" rx=".14"/>`;
+  s += `<rect class="face" x="${x+.04}" y="${y+.04}" width="${w-.08}" height="${h-.08}" rx=".14"/>`;
+  s += horiz
+    ? `<line class="div" x1="${x+1}" y1="${y+.16}" x2="${x+1}" y2="${y+h-.16}"/>`
+    : `<line class="div" x1="${x+.16}" y1="${y+1}" x2="${x+w-.16}" y2="${y+1}"/>`;
+  const halves = horiz ? [[x,y,v1],[x+1,y,v2]] : [[x,y,v1],[x,y+1,v2]];
+  for(const [hx,hy,v] of halves){
+    for(const [px,py] of PIPS[v]){
+      const [ux,uy] = horiz ? [py,px] : [px,py];
+      s += `<circle class="pip" cx="${(hx+ux).toFixed(3)}" cy="${(hy+uy).toFixed(3)}" r=".085"/>`;
+    }
+  }
+  return s + '</g>';
+}
+
+function miniTile(t){
+  return `<svg viewBox="0 0 1 2">${tileSVG({x:0,y:0,w:1,h:2,v1:t[0],v2:t[1]})}</svg>`;
+}
+
+function layout(H){
+  const P = 2.5;
+  const items = [], markers = {};
+  const o = S.origin; if(!o) return {items, markers};
+  const od = o.a===o.b;
+  items.push(od ? {x:-.5,y:-1,w:1,h:2,v1:o.a,v2:o.b,id:o.id} : {x:-1,y:-.5,w:2,h:1,v1:o.a,v2:o.b,id:o.id});
+  for(const side of ['L','R']){
+    const arm = side==='L' ? S.leftArm : S.rightArm;
+    let dir = side==='L' ? -1 : 1;
+    const vdir = side==='L' ? -1 : 1;
+    let row = 0;
+    let x = side==='L' ? (od?-.5:-1) : (od?.5:1);
+    for(const t of arm){
+      const dbl = t.inner===t.outer, len = dbl ? 1 : 2;
+      const yc = row*P*vdir;
+      const fits = dir>0 ? x+len <= H : x-len >= -H;
+      if(fits){
+        if(dbl) items.push({x: dir>0?x:x-1, y:yc-1, w:1, h:2, v1:t.inner, v2:t.outer, id:t.id});
+        else items.push({x: dir>0?x:x-2, y:yc-.5, w:2, h:1, v1: dir>0?t.inner:t.outer, v2: dir>0?t.outer:t.inner, id:t.id});
+        x += dir*len;
+      } else {
+        const cx = dir>0 ? x : x-1;
+        const top = vdir>0 ? yc-.5 : yc-1.5;
+        items.push({x:cx, y:top, w:1, h:2, v1: vdir>0?t.inner:t.outer, v2: vdir>0?t.outer:t.inner, id:t.id});
+        row++; x = dir>0 ? x+1 : x-1; dir = -dir;
+      }
+    }
+    const yc = row*P*vdir;
+    let mx = x + dir*.75;
+    mx = Math.max(-H-.5, Math.min(H+.5, mx));
+    markers[side] = {x: mx, y: yc};
+  }
+  return {items, markers};
+}
+
+function renderBoard(){
+  const board = $('board');
+  if(!S.origin){
+    const who = S.roundOver ? '' : (S.turn===0 ? 'À toi de poser le premier domino.' : `${name(S.turn)} va poser le premier domino…`);
+    board.innerHTML = `<div class="empty">${who}</div>`;
+    return;
+  }
+  const H = board.clientWidth < 520 ? 6 : (board.clientWidth < 820 ? 9 : 11);
+  const {items, markers} = layout(H);
+  let minY = -1.5, maxY = 1.5;
+  for(const it of items){ minY = Math.min(minY, it.y); maxY = Math.max(maxY, it.y+it.h); }
+  const pad = .9;
+  const vbX = -H-1-pad, vbW = 2*H+2+2*pad;
+  const vbY = minY-pad, vbH = (maxY-minY)+2*pad;
+  let s = `<svg viewBox="${vbX} ${vbY} ${vbW} ${vbH}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Chaîne de dominos, bouts ${leftEnd()} et ${rightEnd()}">`;
+  for(const it of items) s += tileSVG(it, it.id===S.lastId ? 'last' : '');
+  if(S.selected){
+    const opts = legalMoves(0).filter(m => m.tile===S.selected).map(m => m.side);
+    for(const side of opts){
+      const m = markers[side];
+      s += `<g class="marker" data-side="${side}"><circle cx="${m.x}" cy="${m.y}" r=".55"/><text x="${m.x}" y="${m.y}">${endVal(side)}</text></g>`;
+    }
+  }
+  s += '</svg>';
+  board.innerHTML = s;
+  board.querySelectorAll('.marker').forEach(g => g.addEventListener('click', () => playSelected(g.dataset.side)));
+}
+
+function renderSeat(el, p){
+  if(p===undefined){ el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const pl = S.players[p], hand = S.hands[p];
+  el.classList.toggle('active', !S.roundOver && S.turn===p);
+  const label = el.classList.contains('side') ? (pl.short || pl.name) : pl.name;
+  let body;
+  if(S.roundOver && S.origin){
+    body = `<div class="reveal">${hand.map(miniTile).join('')}</div>`;
+  } else {
+    const show = Math.min(hand.length, el.classList.contains('side') ? 7 : 14);
+    body = `<div class="backs">${'<div class="back"></div>'.repeat(show)}</div>`;
+  }
+  el.innerHTML = `<span class="name">${label}</span><span class="count">${hand.length}</span>${body}`;
+}
+
+function setStatus(msg, warn=false){
+  const st = $('status'); st.textContent = msg; st.classList.toggle('warn', warn);
+}
+
+function render(){
+  $('s0').textContent = S.scores[0];
+  $('s1').textContent = S.scores[1];
+  const bySeat = {};
+  S.players.forEach((pl,i) => bySeat[pl.seat] = i);
+  renderSeat($('seat-top'), bySeat.top);
+  renderSeat($('seat-left'), bySeat.left);
+  renderSeat($('seat-right'), bySeat.right);
+  renderBoard();
+
+  const myTurn = !S.roundOver && S.turn===0;
+  const moves = myTurn ? legalMoves(0) : [];
+  const playable = new Set(moves.map(m => m.tile));
+  $('me').classList.toggle('active', myTurn);
+
+  const hand = $('hand'); hand.innerHTML = '';
+  for(const tile of S.hands[0] || []){
+    const b = document.createElement('button');
+    b.innerHTML = miniTile(tile);
+    b.setAttribute('aria-label', `Domino ${tile[0]} ${tile[1]}`);
+    if(myTurn){
+      if(playable.has(tile)) b.classList.add('playable'); else b.classList.add('dim');
+    }
+    if(S.selected===tile) b.classList.add('selected');
+    b.addEventListener('click', () => onHandClick(tile, b));
+    hand.appendChild(b);
+  }
+
+  // Actions
+  const bL = $('btnLeft'), bR = $('btnRight'), bD = $('btnDraw'), bP = $('btnPass');
+  bL.hidden = bR.hidden = bD.hidden = bP.hidden = true;
+  if(S.roundOver){
+    setStatus(S.matchOver ? 'Partie terminée.' : 'Manche terminée.');
+  } else if(myTurn){
+    if(S.selected){
+      bL.hidden = bR.hidden = false;
+      bL.textContent = `Sur le ${leftEnd()}`; bR.textContent = `Sur le ${rightEnd()}`;
+      setStatus('Choisis le bout : clique sur un rond jaune ou un bouton.');
+    } else if(moves.length){
+      setStatus(S.origin ? `À toi ! Bouts : ${leftEnd()} et ${rightEnd()}.` : (S.forced ? `À toi de commencer avec ${fmt(S.forced)}.` : 'À toi de commencer : pose le domino de ton choix.'));
+    } else if(S.boneyard.length){
+      bD.hidden = false; setStatus(`Aucun domino ne va sur ${leftEnd()} ou ${rightEnd()} : pioche.`, true);
+    } else {
+      bP.hidden = false; setStatus('Tu ne peux pas jouer : passe ton tour.', true);
+    }
+  } else {
+    setStatus(`${name(S.turn)} réfléchit…`);
+  }
+
+  $('log').innerHTML = S.log.map(l => `<div>${l}</div>`).join('');
+  $('pile').textContent = S.mode==='1v1' ? `Pioche : ${S.boneyard.length}` : '';
+}
+
+/* ---------- Wiring ---------- */
+function seg(id, key, parse){
+  $(id).querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    $(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x===b));
+    S[key] = parse(b.dataset.v);
+  }));
+}
+seg('optMode', 'mode', v => v);
+seg('optTarget', 'target', v => +v);
+
+$('btnStart').addEventListener('click', () => { $('setup').classList.add('hidden'); newMatch(); });
+$('btnNew').addEventListener('click', () => { clearTimeout(S.timer); S.roundOver = true; $('result').classList.add('hidden'); $('setup').classList.remove('hidden'); });
+$('btnNext').addEventListener('click', () => {
+  $('result').classList.add('hidden');
+  if(S.matchOver) newMatch(); else newRound();
+});
+$('btnSeeBoard').addEventListener('click', () => {
+  $('result').classList.add('hidden');
+  const st = $('status'); st.innerHTML = '';
+  const b = document.createElement('button'); b.className = 'btn primary';
+  b.textContent = S.matchOver ? 'Rejouer' : 'Manche suivante';
+  b.addEventListener('click', () => { if(S.matchOver) newMatch(); else newRound(); });
+  $('btnPass').hidden = true; st.appendChild(b);
+});
+$('btnLeft').addEventListener('click', () => playSelected('L'));
+$('btnRight').addEventListener('click', () => playSelected('R'));
+$('btnDraw').addEventListener('click', humanDraw);
+$('btnPass').addEventListener('click', () => { if(!S.roundOver && S.turn===0 && !legalMoves(0).length && !S.boneyard.length) doPass(0); });
+let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(renderBoard, 120); });
+
+// Exposé pour les tests
+window.__dz = S;
+})();
+</script>
+</body>
+</html>
