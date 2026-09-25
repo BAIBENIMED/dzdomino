@@ -245,6 +245,26 @@ input.code{font:600 18px/1 Figtree,monospace;letter-spacing:.3em;text-transform:
 .resrow .pts{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
 .log{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:2px}
 .log div:last-child{color:var(--ink)}
+.askbox{border:2px solid var(--focus);background:rgba(247,210,122,.1);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:pulse 1.2s ease-in-out 3}
+.stwrap{overflow-x:auto}
+table.stats{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+table.stats th,table.stats td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+table.stats th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+table.stats th:first-child,table.stats td:first-child{text-align:left}
+table.stats tr.me td{color:var(--ochre);font-weight:700}
+.confetti{position:fixed;top:-20px;width:9px;height:14px;border-radius:2px;z-index:30;pointer-events:none;animation:fall linear forwards}
+@keyframes fall{to{transform:translateY(112vh) rotate(760deg)}}
+.circus{position:fixed;inset:0;z-index:25;display:grid;place-items:center;padding:16px;overflow:hidden;background:#b3202f}
+.circus::before{content:'';position:absolute;left:50%;top:50%;width:260vmax;height:260vmax;margin:-130vmax 0 0 -130vmax;background:repeating-conic-gradient(#d62839 0 10deg,#f5ecd6 10deg 20deg);animation:spin 18s linear infinite}
+.circus .clown{position:absolute;bottom:-12vh;font-size:38px;animation:floatup linear infinite;z-index:1}
+@keyframes floatup{from{transform:translateY(0) rotate(0)}to{transform:translateY(-130vh) rotate(360deg)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cbox{position:relative;z-index:2;background:var(--panel);border:4px solid var(--ochre);border-radius:20px;padding:22px 20px;text-align:center;max-width:380px;width:calc(100vw - 48px);display:flex;flex-direction:column;gap:10px;align-items:center;box-shadow:0 20px 60px rgba(0,0,0,.55);animation:wobble 1.4s ease-in-out infinite alternate}
+.cbox h2{font-size:40px;color:#e8283f;letter-spacing:.06em}
+.cbox .big{font-size:18px;font-weight:600}
+.cbig{font-size:76px;line-height:1;animation:bounce .55s ease-in-out infinite alternate}
+@keyframes bounce{to{transform:translateY(-14px) scale(1.08)}}
+@keyframes wobble{from{transform:rotate(-2deg)}to{transform:rotate(2deg)}}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ivory);color:#1c1915;padding:10px 16px;border-radius:10px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.4);max-width:calc(100% - 32px);z-index:5}
 .shake{animation:shake .3s}
 @keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
@@ -273,6 +293,13 @@ function mqttDb(){
     client.on('message',(topic,buf)=>{
       let data=null; const txt=dec.decode(buf);
       if(txt){ try{ data=JSON.parse(txt); }catch(e){ return; } }
+      // Never go back in time: a table only moves forward (a copy received twice, or an older
+      // version arriving late through a second subscription, is ignored).
+      const prev=cache.get(topic);
+      if(data && prev && typeof data.v==='number' && typeof prev.v==='number'){
+        if(data.v<prev.v) return;
+        if(data.v===prev.v && data.updatedAt===prev.updatedAt && data.w===prev.w) return;
+      }
       cache.set(topic,data);
       for(const [f,ls] of subs) if(match(f,topic)) [...ls].forEach(fn=>{ try{ fn(topic,data); }catch(e){ console.error(e); } });
     });
@@ -296,10 +323,11 @@ function mqttDb(){
               setTimeout(()=>fin(cache.has(topic)?cache.get(topic):null),1500);
             });
           },
-          set(data){
+          set(data,opt={}){
             return new Promise((res,rej)=>{
               if(!client.connected){ rej({code:'offline'}); return; }
-              client.publish(topic,JSON.stringify(data),{qos:1,retain:true,properties:{messageExpiryInterval:NET.ttl}},err=>err?rej(err):res());
+              const props=opt.keep?{}:{messageExpiryInterval:NET.ttl};
+              client.publish(topic,JSON.stringify(data),{qos:1,retain:true,properties:props},err=>err?rej(err):res());
             });
           },
           acquire(){ return Promise.resolve({acquired:true}); },
@@ -400,7 +428,8 @@ function deal(s){
   const all=shuffle(clone(ALL));
   s.hands=Array.from({length:s.n},(_,i)=>all.slice(i*7,i*7+7).sort(byPips));
   s.talon=all.slice(s.n*7);
-  s.round=(s.round||0)+1; s.line=[]; s.result=null;
+  s.round=(s.round||0)+1; s.line=[]; s.result=null; s.ask=null; s.noBlock=null;
+  if(s.round===1 || !s.gameId) s.gameId=Math.random().toString(36).slice(2,10);
   s.lineBy=[]; s.lineNo=[]; s.moveNo=0; s.last=Array(s.n).fill(null);
   s.voids=Array.from({length:s.n},()=>[]);
   if(s.round===1 || s.lastWinner==null){ const o=strongest(s.hands); s.turn=o.holder; s.openTile=o.tile; }
@@ -627,13 +656,66 @@ function mcChoose(v,moves){
   let b=0; for(let k=1;k<moves.length;k++) if(tot[k]>tot[b]) b=k;
   return moves[b];
 }
+/* ---- Fermer le jeu : à 2 contre 2, on demande d'abord à son partenaire ----
+   Un coup « ferme » s'il bloque la partie. Si le joueur a un autre coup possible et que son
+   partenaire a encore plus d'un domino, le partenaire décide : d'accord (le coup est joué)
+   ou non (le joueur doit jouer un autre domino). */
+const partnerOf=(s,p)=>s.teams?(p+2)%4:-1;
+function wouldBlock(s,seat,i,side){
+  if(!s.teams || s.talon.length) return false;
+  const x=clone(s); x.hist=null; x.events=[]; x.target=Infinity;
+  play(x,seat,i,side); return !!(x.result && x.result.kind==='blocked');
+}
+const noBlockFor=(s,seat)=>!!(s.noBlock && s.noBlock.seat===seat && s.noBlock.n===s.moveNo && s.noBlock.r===s.round);
+/* The moves a player may make now (without the blocking ones once the partner said no). */
+function movesFor(s,seat){
+  const ms=legal(s,seat);
+  if(!noBlockFor(s,seat)) return ms;
+  const ok=ms.filter(m=>!wouldBlock(s,seat,m.i,m.side));
+  return ok.length?ok:ms;
+}
+function needAsk(s,seat,i,side){
+  if(!s.teams || s.status!=='playing' || noBlockFor(s,seat)) return false;
+  const p2=partnerOf(s,seat);
+  if(s.hands[p2].length<=1) return false;
+  if(!wouldBlock(s,seat,i,side)) return false;
+  return legal(s,seat).some(o=>!wouldBlock(s,seat,o.i,o.side));
+}
+/* The AI partner only knows its own hand: it agrees when that hand is light. */
+function aiAgree(s,p){ const hd=s.hands[p]; return !hd.length || pipsOf(hd)/hd.length<=4 || pipsOf(hd)<=8; }
+function resolveAsk(s,yes,auto){
+  const a=s.ask; if(!a) return false;
+  s.ask=null;
+  ev(s,{k:yes?'askYes':'askNo',seat:a.seat,auto:auto?true:undefined,id:Math.random().toString(36).slice(2,8)});
+  if(yes){ const i=s.hands[a.seat].findIndex(x=>same(x,a.t)); if(i>=0 && legal(s,a.seat).some(m=>m.i===i && m.side===a.side)){ play(s,a.seat,i,a.side); return; } }
+  s.noBlock={seat:a.seat,n:s.moveNo,r:s.round};
+  if(isBot(s.seats[a.seat])) botTurn(s,a.seat);
+}
+/* Ask (or, when the partner is the AI, get the answer at once). */
+function startAsk(s,seat,i,side){
+  const p2=partnerOf(s,seat), t=s.hands[seat][i];
+  s.ask={seat,t:[t[0],t[1]],side,at:Date.now(),n:s.moveNo};
+  ev(s,{k:'ask',seat,t:[t[0],t[1]]});
+  if(isBot(s.seats[p2]) || !s.seats[p2]) resolveAsk(s,aiAgree(s,p2),false);
+}
 /* One full turn for an AI seat. */
 function botTurn(s,t){
   const lv=s.level||'moyen';
   let mv=aiChoose(publicView(s,t),lv);
-  if(mv){ play(s,t,mv.i,mv.side); return; }
+  if(mv){ botPlay(s,t,mv); return; }
   noMove(s,t);
-  if(s.status==='playing' && s.turn===t){ mv=aiChoose(publicView(s,t),lv); if(mv) play(s,t,mv.i,mv.side); }
+  if(s.status==='playing' && s.turn===t){ mv=aiChoose(publicView(s,t),lv); if(mv) botPlay(s,t,mv); }
+}
+function botPlay(s,t,mv){
+  if(s.teams && wouldBlock(s,t,mv.i,mv.side)){
+    const alts=legal(s,t).filter(o=>!wouldBlock(s,t,o.i,o.side));
+    if(alts.length){
+      // time ran out for a human, or the partner already said no: don't block
+      if(s._auto || noBlockFor(s,t)){ mv=heuristicChoose(publicView(s,t),alts); }
+      else if(s.hands[partnerOf(s,t)].length>1){ startAsk(s,t,mv.i,mv.side); return; }
+    }
+  }
+  play(s,t,mv.i,mv.side);
 }
 
 /* ======================= Board layout ======================= */
@@ -765,6 +847,8 @@ const SFX={
   deal:()=>{ for(let i=0;i<5;i++) clack(i*.07); },
   turn:()=>{ tone(660,.13,'sine',.11); tone(880,.2,'sine',.09,.12); },
   tick:()=>tone(1150,.05,'square',.04),
+  circus:()=>{ [784,740,698,659,622,587,554,523].forEach((f,i)=>tone(f,.09,'sawtooth',.06,i*.07));
+    [392,370,349].forEach((f,i)=>tone(f,.32,'triangle',.13,.7+i*.38)); tone(330,1.1,'triangle',.13,1.84); tone(165,.25,'square',.05,3.1); tone(165,.25,'square',.05,3.4); },
   win:()=>[523,659,784,1047].forEach((f,i)=>tone(f,.2,'triangle',.11,i*.11)),
   lose:()=>[392,330,262].forEach((f,i)=>tone(f,.26,'sine',.09,i*.15)),
 };
@@ -895,7 +979,7 @@ async function runTx(mutate, lock){
     if(!snap.exists){ toast('Cette table n’existe plus.'); return false; }
     const s=norm(clone(snap.data()));
     if(mutate(s)===false) return false;
-    s.v=(s.v||0)+1; s.updatedAt=Date.now();
+    s.v=(s.v||0)+1; s.updatedAt=Date.now(); s.w=me+':'+TAB;
     await ref.set(s); return true;
   }catch(e){ writeError(e); return false; }
 }
@@ -970,14 +1054,14 @@ function renderLobby(){
         h('h2',{text:'Jouer avec des amis'}),
         h('p',{class:'muted',text:'Sans compte : créez une table et envoyez le lien ou le code à vos trois amis. Chacun choisit sa place : les places 1 et 3 forment une équipe, 2 et 4 l’autre. Une place vide peut être prise par l’IA.'}),
         h('div',{class:'field'},
-          h('label',{class:'lab',for:'nick',text:'Votre nom, vu par les autres joueurs'}),
+          h('label',{class:'lab',for:'nick',text:'Votre nom (obligatoire), vu par les autres joueurs'}),
           h('input',{class:'nick',id:'nick',maxlength:'20',placeholder:profileName||'Votre prénom',value:myNick,autocomplete:'nickname',oninput:e=>saveNick(e.target.value)})),
         h('div',{class:'row'},
           h('button',{class:'btn',id:'btn-create',onclick:createTable,text:'Créer une table'})),
         h('form',{class:'row',onsubmit:e=>{e.preventDefault();
             if(!db){ toast('Le jeu en ligne n’est pas disponible ici.'); return; }
             const v=document.getElementById('join-code').value.trim().toUpperCase();
-            if(/^[A-Z]{4}$/.test(v)) openTable(v); else toast('Le code fait 4 lettres.');}},
+            if(!/^[A-Z]{4}$/.test(v)){ toast('Le code fait 4 lettres.'); return; } if(requireNick()) openTable(v);}},
           h('input',{class:'code',id:'join-code',maxlength:'4',placeholder:'CODE','aria-label':'Code de la table',autocomplete:'off'}),
           h('button',{class:'btn ghost',type:'submit',text:'Rejoindre'})),
         h('p',{class:'muted',id:'online-note',style:'font-size:13px'}),
@@ -986,6 +1070,7 @@ function renderLobby(){
     h('div',{class:'card'},
       h('div',{class:'row',style:'justify-content:space-between'},h('h2',{text:'Tables en ligne'}),h('span',{class:'muted',id:'lobby-state',style:'font-size:13px',text:'Connexion…'})),
       h('div',{class:'tables',id:'tables'})),
+    statsCard(),
     h('div',{class:'card'},
       h('h3',{text:'Règles de la table'}),
       h('ul',{class:'rules'},
@@ -999,6 +1084,7 @@ function renderLobby(){
   refreshOnlineNote();
   renderLobbyLists();
   subscribeLobby();
+  subscribeStats(); renderStats();
 }
 function refreshOnlineNote(){
   const note=document.getElementById('online-note'), create=document.getElementById('btn-create'), help=document.getElementById('access-help');
@@ -1047,6 +1133,7 @@ function renderLobbyLists(){
 }
 async function createTable(){
   if(!db) return;
+  if(!requireNick()) return;
   const L='ABCDEFGHJKLMNPQRSTUVWXYZ';
   for(let tries=0;tries<5;tries++){
     const c=Array.from({length:4},()=>L[Math.floor(Math.random()*L.length)]).join('');
@@ -1058,6 +1145,7 @@ async function createTable(){
   toast('Impossible de créer la table, réessayez.');
 }
 function startLocal(){
+  if(!requireNick()) return;
   const m=AI_MODES.find(x=>x.id===aiPick.mode)||AI_MODES[2];
   unsubTable&&unsubTable(); unsubTable=null;
   localMode=true; code='LOCAL'; selected=null; pendingIdx=null; lastLineLen=0; myDrawn=null; state=null; dropReplay();
@@ -1072,6 +1160,7 @@ function openTable(c){
   localMode=false; code=c; state=null; selected=null; pendingIdx=null; lastLineLen=0; quitArmed=false; myDrawn=null; dropReplay();
   try{ history.replaceState(null,'','#'+c); }catch(e){}
   unsubTable&&unsubTable();
+  if(unsubLobby){ unsubLobby(); unsubLobby=null; }   // one subscription per table, so no copy arrives twice
   const app=document.getElementById('app'); app.replaceChildren(h('p',{class:'muted',text:'Ouverture de la table '+c+'…'}));
   unsubTable=db.doc('tables/'+c).onSnapshot(snap=>{
     if(code!==c) return;
@@ -1089,15 +1178,18 @@ function leaveView(){
   renderLobby();
 }
 function onState(s){
+  if(state && !localMode && s.code===state.code && (s.v||0)<(state.v||0)) return;   // never go back in time
   const changed=!state || state.v!==s.v, prev=state;
   if(state && s.round!==state.round) myDrawn=null;
-  const key= s.status==='playing' ? `${s.round}:${s.moveNo}:${s.turn}` : null;
+  const key= s.status==='playing' ? `${s.round}:${s.moveNo}:${s.turn}:${s.ask?'a':''}:${s.noBlock?s.noBlock.n:''}` : null;
   if(key!==turnKey){ turnKey=key; turnSeenAt=Date.now(); lastTickSec=null; }
   state=s;
   if(changed) playSounds(prev,s);
   if(changed) pendingIdx=null;
   if(selected!=null && (state.status!=='playing' || state.turn!==mySeat())) selected=null;
   renderTable(); schedule();
+  if(changed && prev && prev.code===s.code) afterChange(prev,s);
+  if(s.status==='over') recordStats(s);
   refreshNames(state.seats);
   // a table where I sit without a name gets mine (a name already there is only changed on purpose: "Enregistrer" or sitting down)
   if(!localMode && db && myNick && s.seats.includes(me) && !(s.nicks||{})[me] && nickSynced!==code){
@@ -1114,6 +1206,16 @@ function schedule(){
   const s0=state, t=s0.turn, who=s0.seats[t], v=s0.v, my=mySeat();
   if(retryV!==v){ retryV=v; retries=0; }
   const humans=s0.seats.map((x,p)=>x && !isBot(x)?p:-1).filter(p=>p>=0);
+  if(s0.ask){
+    // the partner answers; if nobody does within 25 s, the AI answers for them
+    const p2=partnerOf(s0,s0.ask.seat);
+    if(my>=0){
+      const extra= my===p2 ? 0 : 2500+Math.max(0,humans.indexOf(my))*1500;
+      actTimer=setTimeout(()=>{ if(state && state.v===v) act(v,s=>{ if(!s.ask) return false; resolveAsk(s,aiAgree(s,p2),true); }); },
+        Math.max(0,(s0.ask.at||Date.now())+25000-Date.now())+extra);
+    }
+    return;
+  }
   const noMoveJob=s=>{ if(s.turn!==t || canPlay(s,t)) return false; noMove(s,t); };
   let delay=null, job=null;
   if(who===me){
@@ -1150,7 +1252,7 @@ function schedule(){
 }
 
 /* ---- player actions ---- */
-function sit(seat){ return transact(s=>{
+function sit(seat){ if(!requireNick()) return Promise.resolve(false); return transact(s=>{
   if(s.status!=='waiting'){ toast('La partie a déjà commencé.'); return false; }
   if(s.seats[seat]){ toast('Cette place est prise.'); return false; }
   s.seats=s.seats.map(x=>x===me?null:x); s.seats[seat]=me; withNick(s); }); }
@@ -1167,7 +1269,7 @@ function startGame(fill){ return transact(s=>{
   s.scores=s.scores.map(()=>0); s.round=0; s.lastWinner=null; s.events=[]; deal(s); }); }
 function nextRound(){ return transact(s=>{ if(s.status!=='roundEnd') return false; deal(s); }); }
 function newGame(){ return transact(s=>{ if(s.status!=='over') return false; s.scores=s.scores.map(()=>0); s.round=0; s.lastWinner=null; s.events=[]; deal(s); }); }
-function takeSeat(p){ return transact(s=>{
+function takeSeat(p){ if(!requireNick()) return Promise.resolve(false); return transact(s=>{
   if(s.seats.includes(me)) return false;
   if(!isBot(s.seats[p])){ toast('Cette place vient d’être prise.'); return false; }
   s.seats[p]=me; withNick(s); }); }
@@ -1189,7 +1291,8 @@ async function leaveTable(){
 function clickTile(i){
   const my=mySeat();
   if(pendingIdx!=null || state.status!=='playing' || state.turn!==my) return;
-  const mv=legal(state,my).filter(m=>m.i===i);
+  const mv=movesFor(state,my).filter(m=>m.i===i);
+  if(state.ask) return;
   if(!mv.length){ const b=document.querySelector(`[data-i="${i}"]`); if(b){ b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); } return; }
   if(mv.length===1){ selected=null; doPlay(i,mv[0].side); return; }
   selected = selected===i ? null : i; renderTable();
@@ -1197,15 +1300,21 @@ function clickTile(i){
 async function doPlay(i,side){
   const my=mySeat(), v=state.v, t=state.hands[my][i];
   pendingIdx=i; myDrawn=null; renderTable();
+  let asked=false;
   const ok=await act(v,s=>{
-    if(s.status!=='playing' || s.turn!==my) return false;
+    if(s.status!=='playing' || s.turn!==my || s.ask) return false;
     const x=s.hands[my][i]; if(!x || x[0]!==t[0] || x[1]!==t[1]) return false;
-    if(!legal(s,my).some(m=>m.i===i && m.side===side)) return false;
+    if(!movesFor(s,my).some(m=>m.i===i && m.side===side)) return false;
+    if(needAsk(s,my,i,side)){ asked=true; startAsk(s,my,i,side); return; }
     play(s,my,i,side);
   });
   if(!ok && state && state.v===v){ pendingIdx=null; renderTable(); }
 }
 function playSide(side){ const i=selected; selected=null; doPlay(i,side); }
+function answerAsk(yes){
+  const v=state.v, my=mySeat();
+  return act(v,s=>{ if(!s.ask || partnerOf(s,s.ask.seat)!==my) return false; resolveAsk(s,yes,false); });
+}
 
 function evText(e){
   const you=e.seat!=null && state.seats[e.seat]===me;
@@ -1217,6 +1326,9 @@ function evText(e){
     case 'pass': return `${n} ${V('passe','passez')}.`;
     case 'draw': return `${n} ${V('pioche','piochez')} ${e.c} domino${e.c>1?'s':''}.`;
     case 'domino': return `${n} ${V('fait','faites')} domino ! +${e.pts}`;
+    case 'ask': return `${n} ${V('demande','demandez')} à son partenaire s’il peut fermer le jeu.`;
+    case 'askYes': return `Partenaire de ${n} : d’accord pour fermer${e.auto?' (réponse auto)':''}.`;
+    case 'askNo': return `Partenaire de ${n} : refuse de fermer${e.auto?' (réponse auto)':''}.`;
     case 'blocked': return e.seat==null?'Partie bloquée, égalité : personne ne marque.':`Partie bloquée : ${n} ${V('est','êtes')} le plus léger. +${e.pts}`;
   }
   return '';
@@ -1345,7 +1457,7 @@ function renderTableInner(app){
       cantWrite() && my<0 ? h('p',{class:'warn',text:'Votre compte n’est pas invité à jouer sur cette page : vous pouvez regarder, mais pas vous asseoir.'}) : null,
       accessHelp(cantWrite() && my<0),
       h('div',{class:'seats'},[0,1,2,3].map(seatCard)),
-      my>=0 ? h('form',{class:'field',onsubmit:e=>{ e.preventDefault(); saveNick(document.getElementById('nick2').value); renameAtTable(); }},
+      my>=0 ? h('form',{class:'field',onsubmit:e=>{ e.preventDefault(); const nv=cleanNick(document.getElementById('nick2').value); if(!nv){ toast('Le nom est obligatoire.'); return; } saveNick(nv); renameAtTable(); }},
         h('label',{class:'lab',for:'nick2',text:'Votre nom à cette table'}),
         h('div',{class:'row'},h('input',{class:'nick',id:'nick2',maxlength:'20',placeholder:profileName||'Votre prénom',value:(s.nicks&&s.nicks[me])||myNick||'',autocomplete:'nickname'}),
           h('button',{class:'btn ghost small',type:'submit',text:'Enregistrer'}))) : null,
@@ -1422,12 +1534,14 @@ function renderTableInner(app){
   // my hand
   if(my>=0){
     const myTurn=s.status==='playing'&&s.turn===my;
-    const moves=myTurn?legal(s,my):[];
+    const moves=myTurn && !s.ask?movesFor(s,my):[];
     const ok=new Set(moves.map(m=>m.i));
     let status='';
     if(s.status==='playing'){
       if(myTurn){
-        if(pendingIdx!=null) status='Vous posez…';
+        if(s.ask && s.ask.seat===my) status='Vous voulez fermer le jeu : votre partenaire décide…';
+        else if(pendingIdx!=null) status='Vous posez…';
+        else if(noBlockFor(s,my)) status='Votre partenaire refuse de fermer : jouez un autre domino.';
         else if(!moves.length) status = s.talon.length ? (s.drawRule==='one'?'Aucun domino jouable : vous piochez un domino et passez.':'Aucun domino jouable : vous piochez.') : 'Aucun domino jouable : vous passez.';
         else if(s.openTile) status=`À vous : posez ${tileName(s.openTile)}.`;
         else if(selected!=null) status='Ce domino va des deux côtés : choisissez le bout.';
@@ -1439,7 +1553,14 @@ function renderTableInner(app){
       h('div',{class:'row',style:'justify-content:space-between'},
         h('div',{class:'row',style:'gap:8px'},h('span',{class:'teamdot '+colorOf(s,my)}),h('span',{class:'status',text:status})),
         h('span',{class:'muted',style:'font-size:13px',text:`${s.hands[my].length} dominos · ${pipsOf(s.hands[my])} pts`})));
-    if(myTurn && s.turnSecs) area.append(timerEl());
+    if(myTurn && s.turnSecs && !s.ask) area.append(timerEl());
+    if(s.status==='playing' && s.ask && partnerOf(s,s.ask.seat)===my){
+      const a=s.ask, left=Math.max(0,Math.ceil(((a.at||Date.now())+25000-Date.now())/1000));
+      area.prepend(h('div',{class:'askbox',role:'alertdialog','aria-label':'Fermer le jeu ?'},
+        h('div',{class:'row',style:'gap:8px'},h('b',{text:`${nameOf(a.seat)} veut fermer le jeu en posant`}),tileEl(a.t[0],a.t[1],{cls:'mini'}),h('b',{text:'. Vous êtes d’accord ?'})),
+        h('p',{class:'hint',text:`Si le jeu est fermé, l’équipe la plus légère en points gagne la manche. Sans réponse dans ${left} s, l’IA répond pour vous.`}),
+        h('div',{class:'row'},h('button',{class:'btn',onclick:()=>answerAsk(true),text:'Oui, ferme'}),h('button',{class:'btn ghost',onclick:()=>answerAsk(false),text:'Non, continue'}))));
+    }
     if(myTurn && selected!=null && s.line.length){
       const L=s.line[0][0], R=s.line[s.line.length-1][1];
       area.append(h('div',{class:'ends'},
@@ -1566,6 +1687,111 @@ function renderReplay(s){
       h('span',{class:'muted',style:'font-size:12.5px',text:`${hand.length} domino${hand.length>1?'s':''} · ${pipsOf(hand)} pts`})),
     h('div',{class:'reveal'},hand.length?hand.map(x=>tileEl(x[0],x[1],{v:true})):[h('span',{class:'muted',text:'Main vide'})])))));
   return out;
+}
+
+
+/* ======================= Fin de partie : fête, cirque et statistiques ======================= */
+function requireNick(){
+  if(myNick) return true;
+  let v=null; try{ v=window.prompt('Votre nom (obligatoire) : il est vu par les autres joueurs et sert aux statistiques.'); }catch(e){}
+  const n=cleanNick(v);
+  if(!n){ toast('Le nom est obligatoire pour jouer.'); const el=document.getElementById('nick'); if(el) el.focus(); return false; }
+  saveNick(n); const el=document.getElementById('nick'); if(el) el.value=n;
+  return true;
+}
+const buzz=p=>{ try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){} };
+function afterChange(prev,s){
+  const my=mySeat();
+  // partner question: tell the partner, then tell both players the answer
+  if(s.ask && !prev.ask && my>=0 && partnerOf(s,s.ask.seat)===my){ buzz([150,80,150]); SFX.turn(); }
+  const lastAns=[...(s.events||[])].reverse().find(e=>e.k==='askYes'||e.k==='askNo');
+  const prevAns=[...(prev.events||[])].reverse().find(e=>e.k==='askYes'||e.k==='askNo');
+  if(lastAns && lastAns.id && (!prevAns || prevAns.id!==lastAns.id) && my>=0){
+    const yes=lastAns.k==='askYes';
+    if(lastAns.seat===my) toast(yes?'Votre partenaire est d’accord : vous fermez le jeu.':'Votre partenaire refuse de fermer : jouez un autre domino.');
+    else if(partnerOf(s,lastAns.seat)===my && lastAns.auto) toast(yes?'Pas de réponse : l’IA a accepté de fermer pour vous.':'Pas de réponse : l’IA a refusé de fermer pour vous.');
+  }
+  if(prev.status!=='over' && s.status==='over' && s.result) setTimeout(()=>celebrate(s),600);
+}
+function celebrate(s){
+  const my=mySeat(), wg=grp(s,s.result.winner), myG=my>=0?grp(s,my):null;
+  const zero=s.scores.map((x,g)=>g!==wg && x===0 ? g : -1).filter(g=>g>=0);
+  const groupName=g=> s.teams ? [0,1,2,3].filter(p=>p%2===g).map(nameOf).join(' et ') : nameOf(g);
+  if(zero.length){
+    const meZero= myG!=null && zero.includes(myG);
+    const plural= s.teams || zero.length>1;
+    circus(meZero, zero.map(groupName).join(', '), plural, s);
+    if(myG===wg) confetti(90);
+  } else if(myG===wg){ confetti(70); buzz(200); }
+  else if(myG!=null) buzz([120,60,120]);
+}
+function confetti(n){
+  const cols=['#e3aa3c','#ec7c5f','#8ec3e6','#c7a3ec','#8fd19e','#e8283f','#f3eddc'];
+  for(let i=0;i<n;i++){
+    const d=h('div',{class:'confetti',style:`left:${Math.random()*100}vw;background:${cols[i%cols.length]};animation-duration:${2.2+Math.random()*2}s;animation-delay:${Math.random()*.8}s;transform:rotate(${Math.random()*360}deg)`});
+    document.body.append(d); setTimeout(()=>d.remove(),5200);
+  }
+}
+function circus(meZero,who,plural,s){
+  buzz(meZero?[400,120,400,120,900]:[250,100,250]);
+  SFX.circus();
+  const icons=['🤡','🎪','🤹','🎈','🎺','🤡','🐒','🎠','🤡','🥁','🎈','🤡'];
+  const ov=h('div',{class:'circus',role:'dialog','aria-modal':'true','aria-label':'Capot : perdu à zéro'},
+    icons.map((x,i)=>h('span',{class:'clown','aria-hidden':'true',style:`left:${(i*8.3+Math.random()*4)%96}vw;animation-duration:${5+Math.random()*4}s;animation-delay:${-Math.random()*6}s`,text:x})),
+    h('div',{class:'cbox'},
+      h('div',{class:'cbig','aria-hidden':'true',text:'🤡'}),
+      h('h2',{text:'CAPOT !'}),
+      h('p',{class:'big',text: meZero ? 'Perdu à zéro… Bienvenue au cirque !' : `${who} ${plural?'perdent':'perd'} à zéro : direction le cirque !`}),
+      h('p',{class:'muted',text:`Score final : ${s.scores.join(' – ')}`}),
+      h('button',{class:'btn',onclick:()=>ov.remove(),text: meZero ? 'Je range mon nez rouge' : 'Fermer'})));
+  document.body.append(ov);
+}
+const statKey=n=>cleanNick(n).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'joueur';
+function recordStats(s){
+  const my=mySeat(); if(my<0 || !s.result || s.result.winner==null || !s.gameId) return;
+  const id=(localMode?'ia:':'net:')+s.code+':'+s.gameId;
+  let done=[]; try{ done=JSON.parse(localStorage.getItem('domino-rec')||'[]'); }catch(e){}
+  if(!Array.isArray(done)) done=[];
+  if(done.includes(id)) return;
+  try{ localStorage.setItem('domino-rec',JSON.stringify([...done,id].slice(-300))); }catch(e){}
+  const g=grp(s,my), wg=grp(s,s.result.winner), win=g===wg;
+  const zeroWin= win && s.scores.every((x,k)=>k===wg || x===0);
+  const zeroLoss= !win && s.scores[g]===0;
+  const inc=o=>({...o, games:(o.games||0)+1, wins:(o.wins||0)+(win?1:0), losses:(o.losses||0)+(win?0:1),
+    winZero:(o.winZero||0)+(zeroWin?1:0), lossZero:(o.lossZero||0)+(zeroLoss?1:0), updatedAt:Date.now()});
+  if(localMode){
+    let o={}; try{ o=JSON.parse(localStorage.getItem('domino-stats-ia')||'{}')||{}; }catch(e){}
+    try{ localStorage.setItem('domino-stats-ia',JSON.stringify(inc(o))); }catch(e){}
+    return;
+  }
+  const nm=(s.nicks&&s.nicks[me])||myNick; if(!db || !nm) return;
+  const key=statKey(nm), ref=db.doc('stats/'+key);
+  ref.get().then(sn=>{ const o=sn.exists?(sn.data()||{}):{}; return ref.set({...inc(o),name:nm,key},{keep:true}); }).catch(()=>{});
+}
+let statsDocs=[], unsubStats=null;
+function subscribeStats(){
+  if(!db || unsubStats) return;
+  unsubStats=db.collection('stats').orderBy('wins','desc').limit(300).onSnapshot(sn=>{ statsDocs=sn.docs.map(d=>d.data()); renderStats(); });
+}
+function statsCard(){
+  return h('div',{class:'card',id:'stats-card'},
+    h('h2',{text:'Statistiques des joueurs'}),
+    h('p',{class:'hint',text:'Parties en ligne terminées, par nom de joueur. Grand Chelem : gagné à zéro. Capot 🤡 : perdu à zéro (direction le cirque).'}),
+    h('div',{id:'stats-box'}));
+}
+function renderStats(){
+  const box=document.getElementById('stats-box'); if(!box) return;
+  const rows=statsDocs.filter(d=>d && d.name).sort((a,b)=>(b.wins||0)-(a.wins||0)||(b.games||0)-(a.games||0)||(a.lossZero||0)-(b.lossZero||0));
+  const myKey=myNick?statKey(myNick):null;
+  const head=['Joueur','Matchs','Gagnés','Perdus','Grand Chelem','Capot 🤡','% victoires'];
+  const body= rows.length ? rows.map(d=>h('tr',{class:d.key===myKey?'me':null},
+      h('td',{text:d.name}),[d.games,d.wins,d.losses,d.winZero,d.lossZero].map(x=>h('td',{text:String(x||0)})),
+      h('td',{text:d.games?Math.round(100*(d.wins||0)/d.games)+' %':'–'})))
+    : [h('tr',{},h('td',{colspan:'7',class:'muted',style:'text-align:left',text: db ? 'Aucune partie en ligne terminée pour l’instant.' : 'Statistiques indisponibles hors ligne.'}))];
+  let o={}; try{ o=JSON.parse(localStorage.getItem('domino-stats-ia')||'{}')||{}; }catch(e){}
+  box.replaceChildren(
+    h('div',{class:'stwrap'},h('table',{class:'stats'},h('thead',{},h('tr',{},head.map(x=>h('th',{scope:'col',text:x})))),h('tbody',{},body))),
+    h('p',{class:'hint',text:`Vous contre l’IA, sur cet appareil : ${o.games||0} match${(o.games||0)>1?'s':''}, ${o.wins||0} gagné${(o.wins||0)>1?'s':''}, ${o.losses||0} perdu${(o.losses||0)>1?'s':''}, ${o.winZero||0} grand chelem, ${o.lossZero||0} capot.`}));
 }
 
 /* ======================= Boot ======================= */
