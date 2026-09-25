@@ -327,7 +327,9 @@ function mqttDb(){
             return new Promise((res,rej)=>{
               if(!client.connected){ rej({code:'offline'}); return; }
               const props=opt.keep?{}:{messageExpiryInterval:NET.ttl};
-              client.publish(topic,JSON.stringify(data),{qos:1,retain:true,properties:props},err=>err?rej(err):res());
+              // never wait forever (phone in the background, network gone): the move is refused and can be replayed
+              const tm=setTimeout(()=>rej({code:'timeout'}),8000);
+              client.publish(topic,JSON.stringify(data),{qos:1,retain:true,properties:props},err=>{ clearTimeout(tm); err?rej(err):res(); });
             });
           },
           acquire(){ return Promise.resolve({acquired:true}); },
@@ -360,6 +362,9 @@ function mqttDb(){
       if(netWasOffline){ netWasOffline=false; toast('Reconnecté au jeu en ligne.'); }
       if(!settled){ settled=true; resolve(db); }
     });
+    // back on the page (phone unlocked, tab reopened): reconnect at once and get the latest tables
+    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && !client.connected){ try{ client.reconnect(); }catch(e){} } });
+    window.addEventListener('online',()=>{ if(!client.connected){ try{ client.reconnect(); }catch(e){} } });
     client.on('offline',()=>{ if(settled && !netWasOffline){ netWasOffline=true; toast('Connexion au jeu en ligne perdue, reconnexion…'); } });
     setTimeout(()=>{ if(!settled){ settled=true; resolve(null); try{ client.end(true); }catch(e){} } },12000);
   });
