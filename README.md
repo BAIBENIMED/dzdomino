@@ -1,23 +1,21 @@
 # DZ Domino
 
-Jeu de dominos double-six « à l'algérienne », jouable directement dans le navigateur (un seul fichier `index.html`, sans installation).
+Le domino à l'algérienne (double-six), jouable dans le navigateur : **https://baibenimed.github.io/dzdomino/**
 
 ## Modes
 
-- **1 contre 1** contre l'ordinateur, avec pioche.
-- **2 contre 2** : toi et ton partenaire (en face) contre deux adversaires, sans pioche.
-
-Parties en 50, 100 ou 150 points.
+- **Contre l'IA** : 2, 3 ou 4 joueurs (2 contre 2 ou chacun pour soi), trois niveaux (facile, moyen, difficile), pioche au choix, temps par coup.
+- **En ligne avec des amis, sans compte** : créez une table, envoyez le lien ou le code de 4 lettres, chacun choisit sa place (places 1 et 3 contre 2 et 4). Les places vides peuvent être prises par l'IA.
+- Sons, rappel des derniers coups et « Revoir la manche ».
 
 ## Règles
 
-- 28 dominos, 7 par joueur.
-- 1ʳᵉ manche : le joueur qui a le plus gros double commence avec ce double. Ensuite, le gagnant de la manche précédente commence.
-- On pose un domino dont un côté correspond à un bout de la chaîne.
-- 1 contre 1 : si tu ne peux pas jouer, tu pioches ; pioche vide, tu passes.
-- Le premier qui pose tous ses dominos gagne la manche et marque les points restant chez l'adversaire.
-- Jeu bloqué : le camp qui a le moins de points en main gagne la manche.
+- 7 dominos chacun ; à 2 ou 3 joueurs, le reste forme la pioche.
+- 1ʳᵉ manche : le plus gros double ouvre ; ensuite, le gagnant de la manche précédente ouvre.
+- Celui qui pose son dernier domino marque les points restant dans les mains adverses.
+- Partie bloquée : le joueur le plus léger gagne la manche.
+- Première équipe, ou premier joueur, à 100 points.
 
-## Jouer
+## Technique
 
-Ouvre `index.html` dans un navigateur, ou active GitHub Pages (Settings → Pages → branche `main`) pour jouer en ligne sur `https://baibenimed.github.io/dzdomino/`.
+Un seul fichier `index.html`. Le jeu en ligne passe par un serveur MQTT public (`broker.emqx.io`) : chaque table y est gardée 24 h. C'est un serveur public et gratuit, donc sans garantie de disponibilité, et une personne technique pourrait lire l'état des tables. Ça convient pour jouer entre amis, pas pour de l'argent.
