@@ -247,9 +247,9 @@ input.code{font:600 18px/1 Figtree,monospace;letter-spacing:.3em;text-transform:
 .log div:last-child{color:var(--ink)}
 .askbox{border:2px solid var(--focus);background:rgba(247,210,122,.1);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:pulse 1.2s ease-in-out 3}
 .stwrap{overflow-x:auto}
-table.stats{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
-table.stats th,table.stats td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
-table.stats th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+table.stats{width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums}
+table.stats th,table.stats td{padding:7px 5px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+table.stats th{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600}
 table.stats th:first-child,table.stats td:first-child{text-align:left}
 table.stats tr.me td{color:var(--ochre);font-weight:700}
 .confetti{position:fixed;top:-20px;width:9px;height:14px;border-radius:2px;z-index:30;pointer-events:none;animation:fall linear forwards}
@@ -259,7 +259,7 @@ table.stats tr.me td{color:var(--ochre);font-weight:700}
 .circus .clown{position:absolute;bottom:-12vh;font-size:38px;animation:floatup linear infinite;z-index:1}
 @keyframes floatup{from{transform:translateY(0) rotate(0)}to{transform:translateY(-130vh) rotate(360deg)}}
 @keyframes spin{to{transform:rotate(360deg)}}
-.cbox{position:relative;z-index:2;background:var(--panel);border:4px solid var(--ochre);border-radius:20px;padding:22px 20px;text-align:center;max-width:380px;width:calc(100vw - 48px);display:flex;flex-direction:column;gap:10px;align-items:center;box-shadow:0 20px 60px rgba(0,0,0,.55);animation:wobble 1.4s ease-in-out infinite alternate}
+.cbox{box-sizing:border-box;position:relative;z-index:2;background:var(--panel);border:4px solid var(--ochre);border-radius:20px;padding:22px 20px;text-align:center;max-width:380px;width:calc(100vw - 48px);display:flex;flex-direction:column;gap:10px;align-items:center;box-shadow:0 20px 60px rgba(0,0,0,.55);animation:wobble 1.4s ease-in-out infinite alternate}
 .cbox h2{font-size:40px;color:#e8283f;letter-spacing:.06em}
 .cbox .big{font-size:18px;font-weight:600}
 .cbig{font-size:76px;line-height:1;animation:bounce .55s ease-in-out infinite alternate}
@@ -433,7 +433,7 @@ function deal(s){
   const all=shuffle(clone(ALL));
   s.hands=Array.from({length:s.n},(_,i)=>all.slice(i*7,i*7+7).sort(byPips));
   s.talon=all.slice(s.n*7);
-  s.round=(s.round||0)+1; s.line=[]; s.result=null; s.ask=null; s.noBlock=null;
+  s.round=(s.round||0)+1; s.line=[]; s.result=null; s.ask=null; s.noBlock=null; s.freeBlock=null;
   if(s.round===1 || !s.gameId) s.gameId=Math.random().toString(36).slice(2,10);
   s.lineBy=[]; s.lineNo=[]; s.moveNo=0; s.last=Array(s.n).fill(null);
   s.voids=Array.from({length:s.n},()=>[]);
@@ -671,6 +671,7 @@ function wouldBlock(s,seat,i,side){
   const x=clone(s); x.hist=null; x.events=[]; x.target=Infinity;
   play(x,seat,i,side); return !!(x.result && x.result.kind==='blocked');
 }
+const freeFor=(s,seat)=>!!(s.freeBlock && s.freeBlock.seat===seat && s.freeBlock.n===s.moveNo && s.freeBlock.r===s.round);
 const noBlockFor=(s,seat)=>!!(s.noBlock && s.noBlock.seat===seat && s.noBlock.n===s.moveNo && s.noBlock.r===s.round);
 /* The moves a player may make now (without the blocking ones once the partner said no). */
 function movesFor(s,seat){
@@ -680,7 +681,7 @@ function movesFor(s,seat){
   return ok.length?ok:ms;
 }
 function needAsk(s,seat,i,side){
-  if(!s.teams || s.status!=='playing' || noBlockFor(s,seat)) return false;
+  if(!s.teams || s.status!=='playing' || noBlockFor(s,seat) || freeFor(s,seat)) return false;
   const p2=partnerOf(s,seat);
   if(s.hands[p2].length<=1) return false;
   if(!wouldBlock(s,seat,i,side)) return false;
@@ -688,10 +689,17 @@ function needAsk(s,seat,i,side){
 }
 /* The AI partner only knows its own hand: it agrees when that hand is light. */
 function aiAgree(s,p){ const hd=s.hands[p]; return !hd.length || pipsOf(hd)/hd.length<=4 || pipsOf(hd)<=8; }
-function resolveAsk(s,yes,auto){
+/* ans: true (d'accord), false (refuse) or 'idk' (je ne sais pas : le joueur décide seul). */
+function resolveAsk(s,ans,auto){
   const a=s.ask; if(!a) return false;
   s.ask=null;
-  ev(s,{k:yes?'askYes':'askNo',seat:a.seat,auto:auto?true:undefined,id:Math.random().toString(36).slice(2,8)});
+  const idk=ans==='idk', yes=ans===true;
+  ev(s,{k:idk?'askIdk':yes?'askYes':'askNo',seat:a.seat,auto:auto?true:undefined,id:Math.random().toString(36).slice(2,8)});
+  if(idk){
+    s.freeBlock={seat:a.seat,n:s.moveNo,r:s.round};
+    if(isBot(s.seats[a.seat])){ const i=s.hands[a.seat].findIndex(x=>same(x,a.t)); if(i>=0 && legal(s,a.seat).some(m=>m.i===i && m.side===a.side)) play(s,a.seat,i,a.side); else botTurn(s,a.seat); }
+    return;
+  }
   if(yes){ const i=s.hands[a.seat].findIndex(x=>same(x,a.t)); if(i>=0 && legal(s,a.seat).some(m=>m.i===i && m.side===a.side)){ play(s,a.seat,i,a.side); return; } }
   s.noBlock={seat:a.seat,n:s.moveNo,r:s.round};
   if(isBot(s.seats[a.seat])) botTurn(s,a.seat);
@@ -716,7 +724,8 @@ function botPlay(s,t,mv){
     const alts=legal(s,t).filter(o=>!wouldBlock(s,t,o.i,o.side));
     if(alts.length){
       // time ran out for a human, or the partner already said no: don't block
-      if(s._auto || noBlockFor(s,t)){ mv=heuristicChoose(publicView(s,t),alts); }
+      if(freeFor(s,t)){ /* the partner left the choice: keep the move */ }
+      else if(s._auto || noBlockFor(s,t)){ mv=heuristicChoose(publicView(s,t),alts); }
       else if(s.hands[partnerOf(s,t)].length>1){ startAsk(s,t,mv.i,mv.side); return; }
     }
   }
@@ -1302,23 +1311,28 @@ function clickTile(i){
   if(mv.length===1){ selected=null; doPlay(i,mv[0].side); return; }
   selected = selected===i ? null : i; renderTable();
 }
-async function doPlay(i,side){
+/* A move that closes the game: the player chooses to ask the partner or to close alone. */
+let closeChoice=null;
+async function doPlay(i,side,mode){
   const my=mySeat(), v=state.v, t=state.hands[my][i];
+  if(!mode && needAsk(state,my,i,side)){ closeChoice={i,side,v}; selected=null; renderTable(); return; }
+  closeChoice=null;
   pendingIdx=i; myDrawn=null; renderTable();
   let asked=false;
   const ok=await act(v,s=>{
     if(s.status!=='playing' || s.turn!==my || s.ask) return false;
     const x=s.hands[my][i]; if(!x || x[0]!==t[0] || x[1]!==t[1]) return false;
     if(!movesFor(s,my).some(m=>m.i===i && m.side===side)) return false;
+    if(mode==='alone'){ ev(s,{k:'closeAlone',seat:my}); play(s,my,i,side); return; }
     if(needAsk(s,my,i,side)){ asked=true; startAsk(s,my,i,side); return; }
     play(s,my,i,side);
   });
   if(!ok && state && state.v===v){ pendingIdx=null; renderTable(); }
 }
 function playSide(side){ const i=selected; selected=null; doPlay(i,side); }
-function answerAsk(yes){
+function answerAsk(ans){
   const v=state.v, my=mySeat();
-  return act(v,s=>{ if(!s.ask || partnerOf(s,s.ask.seat)!==my) return false; resolveAsk(s,yes,false); });
+  return act(v,s=>{ if(!s.ask || partnerOf(s,s.ask.seat)!==my) return false; resolveAsk(s,ans,false); });
 }
 
 function evText(e){
@@ -1331,9 +1345,11 @@ function evText(e){
     case 'pass': return `${n} ${V('passe','passez')}.`;
     case 'draw': return `${n} ${V('pioche','piochez')} ${e.c} domino${e.c>1?'s':''}.`;
     case 'domino': return `${n} ${V('fait','faites')} domino ! +${e.pts}`;
-    case 'ask': return `${n} ${V('demande','demandez')} à son partenaire s’il peut fermer le jeu.`;
-    case 'askYes': return `Partenaire de ${n} : d’accord pour fermer${e.auto?' (réponse auto)':''}.`;
-    case 'askNo': return `Partenaire de ${n} : refuse de fermer${e.auto?' (réponse auto)':''}.`;
+    case 'ask': return you ? 'Vous demandez à votre partenaire si vous pouvez fermer le jeu.' : `${n} demande à son partenaire s’il peut fermer le jeu.`;
+    case 'askYes': return `${you?'Votre partenaire':'Le partenaire de '+n} : d’accord pour fermer${e.auto?' (réponse auto)':''}.`;
+    case 'closeAlone': return `${n} ${V('ferme','fermez')} le jeu sans demander.`;
+    case 'askIdk': return `${you?'Votre partenaire':'Le partenaire de '+n} : ne sait pas, ${you?'vous décidez':'il décide'} seul.`;
+    case 'askNo': return `${you?'Votre partenaire':'Le partenaire de '+n} : refuse de fermer${e.auto?' (réponse auto)':''}.`;
     case 'blocked': return e.seat==null?'Partie bloquée, égalité : personne ne marque.':`Partie bloquée : ${n} ${V('est','êtes')} le plus léger. +${e.pts}`;
   }
   return '';
@@ -1547,6 +1563,7 @@ function renderTableInner(app){
         if(s.ask && s.ask.seat===my) status='Vous voulez fermer le jeu : votre partenaire décide…';
         else if(pendingIdx!=null) status='Vous posez…';
         else if(noBlockFor(s,my)) status='Votre partenaire refuse de fermer : jouez un autre domino.';
+        else if(freeFor(s,my)) status='Votre partenaire ne sait pas : à vous de décider (fermer ou non).';
         else if(!moves.length) status = s.talon.length ? (s.drawRule==='one'?'Aucun domino jouable : vous piochez un domino et passez.':'Aucun domino jouable : vous piochez.') : 'Aucun domino jouable : vous passez.';
         else if(s.openTile) status=`À vous : posez ${tileName(s.openTile)}.`;
         else if(selected!=null) status='Ce domino va des deux côtés : choisissez le bout.';
@@ -1559,12 +1576,24 @@ function renderTableInner(app){
         h('div',{class:'row',style:'gap:8px'},h('span',{class:'teamdot '+colorOf(s,my)}),h('span',{class:'status',text:status})),
         h('span',{class:'muted',style:'font-size:13px',text:`${s.hands[my].length} dominos · ${pipsOf(s.hands[my])} pts`})));
     if(myTurn && s.turnSecs && !s.ask) area.append(timerEl());
+    if(closeChoice && (!myTurn || closeChoice.v!==s.v)) closeChoice=null;
+    if(closeChoice){
+      const c=closeChoice, t=s.hands[my][c.i];
+      area.prepend(h('div',{class:'askbox',role:'alertdialog','aria-label':'Fermer le jeu'},
+        h('div',{class:'row',style:'gap:8px'},h('b',{text:'Ce domino ferme le jeu'}),tileEl(t[0],t[1],{cls:'mini'}),h('b',{text:'.'})),
+        h('p',{class:'hint',text:'Vous pouvez demander l’avis de votre partenaire, ou fermer sans demander.'}),
+        h('div',{class:'row'},
+          h('button',{class:'btn',onclick:()=>doPlay(c.i,c.side,'ask'),text:'Demander à mon partenaire'}),
+          h('button',{class:'btn ghost',onclick:()=>doPlay(c.i,c.side,'alone'),text:'Fermer sans demander'}),
+          h('button',{class:'btn ghost',onclick:()=>{ closeChoice=null; renderTable(); },text:'Annuler'}))));
+    }
     if(s.status==='playing' && s.ask && partnerOf(s,s.ask.seat)===my){
       const a=s.ask, left=Math.max(0,Math.ceil(((a.at||Date.now())+25000-Date.now())/1000));
       area.prepend(h('div',{class:'askbox',role:'alertdialog','aria-label':'Fermer le jeu ?'},
         h('div',{class:'row',style:'gap:8px'},h('b',{text:`${nameOf(a.seat)} veut fermer le jeu en posant`}),tileEl(a.t[0],a.t[1],{cls:'mini'}),h('b',{text:'. Vous êtes d’accord ?'})),
         h('p',{class:'hint',text:`Si le jeu est fermé, l’équipe la plus légère en points gagne la manche. Sans réponse dans ${left} s, l’IA répond pour vous.`}),
-        h('div',{class:'row'},h('button',{class:'btn',onclick:()=>answerAsk(true),text:'Oui, ferme'}),h('button',{class:'btn ghost',onclick:()=>answerAsk(false),text:'Non, continue'}))));
+        h('div',{class:'row'},h('button',{class:'btn',onclick:()=>answerAsk(true),text:'Oui, ferme'}),h('button',{class:'btn ghost',onclick:()=>answerAsk(false),text:'Non, continue'}),h('button',{class:'btn ghost',onclick:()=>answerAsk('idk'),text:'Je sais pas'})),
+        h('p',{class:'hint',text:'« Je sais pas » : votre partenaire décide seul s’il ferme ou non.'})));
     }
     if(myTurn && selected!=null && s.line.length){
       const L=s.line[0][0], R=s.line[s.line.length-1][1];
@@ -1709,11 +1738,13 @@ function afterChange(prev,s){
   const my=mySeat();
   // partner question: tell the partner, then tell both players the answer
   if(s.ask && !prev.ask && my>=0 && partnerOf(s,s.ask.seat)===my){ buzz([150,80,150]); SFX.turn(); }
-  const lastAns=[...(s.events||[])].reverse().find(e=>e.k==='askYes'||e.k==='askNo');
-  const prevAns=[...(prev.events||[])].reverse().find(e=>e.k==='askYes'||e.k==='askNo');
+  const isAns=e=>e.k==='askYes'||e.k==='askNo'||e.k==='askIdk';
+  const lastAns=[...(s.events||[])].reverse().find(isAns);
+  const prevAns=[...(prev.events||[])].reverse().find(isAns);
   if(lastAns && lastAns.id && (!prevAns || prevAns.id!==lastAns.id) && my>=0){
     const yes=lastAns.k==='askYes';
-    if(lastAns.seat===my) toast(yes?'Votre partenaire est d’accord : vous fermez le jeu.':'Votre partenaire refuse de fermer : jouez un autre domino.');
+    if(lastAns.k==='askIdk'){ if(lastAns.seat===my) toast('Votre partenaire ne sait pas : à vous de décider si vous fermez.'); }
+    else if(lastAns.seat===my) toast(yes?'Votre partenaire est d’accord : vous fermez le jeu.':'Votre partenaire refuse de fermer : jouez un autre domino.');
     else if(partnerOf(s,lastAns.seat)===my && lastAns.auto) toast(yes?'Pas de réponse : l’IA a accepté de fermer pour vous.':'Pas de réponse : l’IA a refusé de fermer pour vous.');
   }
   if(prev.status!=='over' && s.status==='over' && s.result) setTimeout(()=>celebrate(s),600);
@@ -1781,14 +1812,14 @@ function subscribeStats(){
 function statsCard(){
   return h('div',{class:'card',id:'stats-card'},
     h('h2',{text:'Statistiques des joueurs'}),
-    h('p',{class:'hint',text:'Parties en ligne terminées, par nom de joueur. Grand Chelem : gagné à zéro. Capot 🤡 : perdu à zéro (direction le cirque).'}),
+    h('p',{class:'hint',text:'Parties en ligne terminées, par nom de joueur. Chelem : gagné à zéro (Grand Chelem). Capot 🤡 : perdu à zéro, direction le cirque.'}),
     h('div',{id:'stats-box'}));
 }
 function renderStats(){
   const box=document.getElementById('stats-box'); if(!box) return;
   const rows=statsDocs.filter(d=>d && d.name).sort((a,b)=>(b.wins||0)-(a.wins||0)||(b.games||0)-(a.games||0)||(a.lossZero||0)-(b.lossZero||0));
   const myKey=myNick?statKey(myNick):null;
-  const head=['Joueur','Matchs','Gagnés','Perdus','Grand Chelem','Capot 🤡','% victoires'];
+  const head=['Joueur','Joués','Gagnés','Perdus','Chelem','Capot 🤡','%'];
   const body= rows.length ? rows.map(d=>h('tr',{class:d.key===myKey?'me':null},
       h('td',{text:d.name}),[d.games,d.wins,d.losses,d.winZero,d.lossZero].map(x=>h('td',{text:String(x||0)})),
       h('td',{text:d.games?Math.round(100*(d.wins||0)/d.games)+' %':'–'})))
