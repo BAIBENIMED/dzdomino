@@ -265,6 +265,11 @@ table.stats tr.me td{color:var(--ochre);font-weight:700}
 .cbig{font-size:76px;line-height:1;animation:bounce .55s ease-in-out infinite alternate}
 @keyframes bounce{to{transform:translateY(-14px) scale(1.08)}}
 @keyframes wobble{from{transform:rotate(-2deg)}to{transform:rotate(2deg)}}
+.voicebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:13.5px}
+.vchip{display:inline-flex;align-items:center;gap:6px;background:var(--panel-2);border-radius:999px;padding:3px 10px}
+.vchip .dot{width:8px;height:8px;border-radius:50%;background:var(--good)}
+.vchip.wait .dot{background:var(--ochre)}
+.vchip.off .dot{background:var(--coral)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ivory);color:#1c1915;padding:10px 16px;border-radius:10px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.4);max-width:calc(100% - 32px);z-index:5}
 .shake{animation:shake .3s}
 @keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
@@ -355,6 +360,11 @@ function mqttDb(){
             return ()=>{ clearTimeout(tm); off(); };
           }};
         return q;
+      },
+      // live messages (not kept on the server), used by the voice chat
+      raw:{
+        publish(path,obj){ if(client.connected) client.publish(NET.root+path,JSON.stringify(obj),{qos:0}); },
+        listen(path,fn){ return listen(NET.root+path,(t,d)=>{ if(d) fn(d,t.slice(NET.root.length)); }); }
       }
     };
     let settled=false;
@@ -1187,6 +1197,7 @@ function openTable(c){
   }, e=>toast('Connexion à la table perdue. Rechargez la page.'));
 }
 function leaveView(){
+  voiceLeave();
   unsubTable&&unsubTable(); unsubTable=null; localMode=false; code=null; quitArmed=false;
   try{ history.replaceState(null,'',location.pathname); }catch(e){}
   renderLobby();
@@ -1454,9 +1465,11 @@ function renderTableInner(app){
     localMode? h('span',{class:'tcode',text:`IA · ${levelName(s.level)}`,style:'letter-spacing:.06em'}) :
       h('button',{class:'tcode',title:'Inviter des amis (copier le lien)',onclick:()=>shareInvite(code),text:code}),
     soundBtn(),
+    (!localMode && db && my>=0) ? voiceBtns() : null,
     h('span',{class:'grow'}),
     h('div',{class:'scores'},scoreEls));
   const kids=[top];
+  if(Voice.on) kids.push(voiceBar());
   if(replay && s.status!=='waiting'){ app.replaceChildren(top,...renderReplay(s)); layoutSnakes(); return; }
 
   if(s.status==='waiting'){
@@ -1828,6 +1841,134 @@ function renderStats(){
   box.replaceChildren(
     h('div',{class:'stwrap'},h('table',{class:'stats'},h('thead',{},h('tr',{},head.map(x=>h('th',{scope:'col',text:x})))),h('tbody',{},body))),
     h('p',{class:'hint',text:`Vous contre l’IA, sur cet appareil : ${o.games||0} match${(o.games||0)>1?'s':''}, ${o.wins||0} gagné${(o.wins||0)>1?'s':''}, ${o.losses||0} perdu${(o.losses||0)>1?'s':''}, ${o.winZero||0} grand chelem, ${o.lossZero||0} capot.`}));
+}
+
+
+/* ======================= Micro en direct (appel de groupe) ======================= */
+/* Les joueurs d'une table se parlent directement (WebRTC), téléphone à téléphone.
+   Le serveur du jeu sert seulement à se trouver : chaque participant s'annonce toutes les
+   4 s ; pour chaque paire, celui qui a le plus petit identifiant appelle l'autre. */
+const Voice={sid:null, on:false, muted:false, stream:null, peers:new Map(), offs:[], timer:null, code:null, box:null};
+const VOICE_ICE={iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}]};
+function voiceName(id){
+  if(id===me) return 'Vous';
+  const p=state && state.seats ? state.seats.indexOf(id) : -1;
+  if(p>=0) return nameOf(p);
+  const v=Voice.peers.get(id); return (v && v.name) || 'Joueur';
+}
+function voiceBtns(){
+  if(!Voice.on) return h('button',{class:'btn ghost small',title:'Parler avec les joueurs de la table',onclick:voiceJoin,text:'🎤 Vocal'});
+  return h('button',{class:'btn small'+(Voice.muted?' ghost':''),title:Voice.muted?'Réactiver mon micro':'Couper mon micro',onclick:voiceToggleMute,text:Voice.muted?'🔇 Micro coupé':'🎤 Micro ouvert'});
+}
+function voiceBar(){
+  const list=[h('span',{class:'vchip me'+(Voice.muted?' off':'')},h('span',{class:'dot'}),'Vous'+(Voice.muted?' (coupé)':''))];
+  for(const [id,v] of Voice.peers){
+    const st=v.pc?v.pc.connectionState:'new';
+    const ok=st==='connected';
+    list.push(h('span',{class:'vchip'+(ok?'':' wait'),title:ok?'Connecté':'Connexion…'},h('span',{class:'dot'}),voiceName(id)+(ok?'':' …')));
+  }
+  if(!Voice.peers.size) list.push(h('span',{class:'hint',text:'En attente des autres joueurs (ils doivent aussi toucher « 🎤 Vocal »).'}));
+  return h('div',{class:'voicebar',role:'status','aria-label':'Vocal'},h('b',{text:'Vocal'}),list,
+    h('button',{class:'btn ghost small',onclick:voiceLeave,text:'Quitter le vocal'}));
+}
+function voiceRefresh(){ if(state) renderTable(); }
+async function voiceJoin(){
+  if(Voice.on || !db || !db.raw || !code || localMode) return;
+  if(!window.RTCPeerConnection || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ toast('Ce navigateur ne permet pas le vocal.'); return; }
+  try{ Voice.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false}); }
+  catch(e){ toast('Micro refusé : autorisez le micro pour ce site dans le navigateur.'); return; }
+  Voice.on=true; Voice.muted=false; Voice.code=code; Voice.sid=Math.random().toString(36).slice(2,10);
+  if(!Voice.box){ Voice.box=h('div',{id:'voice-audio',hidden:true}); document.body.append(Voice.box); }
+  const c=code;
+  Voice.offs.push(db.raw.listen(`voice/${c}/all`,m=>voiceOnHello(m)));
+  Voice.offs.push(db.raw.listen(`voice/${c}/to/${me}`,m=>voiceOnSignal(m)));
+  const hello=()=>db.raw.publish(`voice/${c}/all`,{t:'hello',from:me,sid:Voice.sid,name:myNick||'Joueur',at:Date.now()});
+  hello(); Voice.timer=setInterval(()=>{ hello(); voiceSweep(); },4000);
+  toast('Vocal activé. Les autres joueurs doivent aussi toucher « 🎤 Vocal ».');
+  voiceRefresh();
+}
+function voiceLeave(){
+  if(!Voice.on) return;
+  try{ db && db.raw && db.raw.publish(`voice/${Voice.code}/all`,{t:'bye',from:me}); }catch(e){}
+  clearInterval(Voice.timer); Voice.timer=null;
+  Voice.offs.forEach(f=>{ try{ f(); }catch(e){} }); Voice.offs=[];
+  for(const id of [...Voice.peers.keys()]) voiceDrop(id,true);
+  if(Voice.stream) Voice.stream.getTracks().forEach(t=>t.stop());
+  Voice.stream=null; Voice.on=false; Voice.code=null;
+  voiceRefresh();
+}
+function voiceToggleMute(){
+  Voice.muted=!Voice.muted;
+  if(Voice.stream) Voice.stream.getAudioTracks().forEach(t=>t.enabled=!Voice.muted);
+  voiceRefresh();
+}
+function voiceDrop(id,quiet){
+  const v=Voice.peers.get(id); if(!v) return;
+  try{ v.pc && v.pc.close(); }catch(e){}
+  if(v.audio) v.audio.remove();
+  Voice.peers.delete(id);
+  if(!quiet) voiceRefresh();
+}
+function voiceSweep(){ const now=Date.now(); for(const [id,v] of Voice.peers) if(now-(v.seen||0)>15000) voiceDrop(id); }
+function voicePeer(id,name){
+  let v=Voice.peers.get(id);
+  if(v && v.pc && ['failed','closed'].includes(v.pc.connectionState)){ voiceDrop(id,true); v=null; }
+  if(v){ v.seen=Date.now(); if(name) v.name=name; return v; }
+  const pc=new RTCPeerConnection(VOICE_ICE);
+  v={pc,name,seen:Date.now(),audio:null};
+  Voice.peers.set(id,v);
+  Voice.stream.getTracks().forEach(t=>pc.addTrack(t,Voice.stream));
+  pc.ontrack=e=>{
+    if(!v.audio){ v.audio=h('audio',{autoplay:true,playsinline:true}); Voice.box.append(v.audio); }
+    v.audio.srcObject=e.streams[0]; const pr=v.audio.play(); if(pr && pr.catch) pr.catch(()=>{});
+  };
+  pc.onconnectionstatechange=()=>{
+    if(pc.connectionState==='connected') toast(`${voiceName(id)} est dans le vocal.`);
+    if(pc.connectionState==='failed') toast(`Vocal impossible avec ${voiceName(id)} (réseau trop protégé).`);
+    voiceRefresh();
+  };
+  return v;
+}
+/* Wait until the connection candidates are known, so one message carries everything. */
+function voiceGathered(pc){
+  if(pc.iceGatheringState==='complete') return Promise.resolve();
+  return new Promise(r=>{ const t=setTimeout(r,2500); pc.addEventListener('icegatheringstatechange',()=>{ if(pc.iceGatheringState==='complete'){ clearTimeout(t); r(); } }); });
+}
+async function voiceOnHello(m){
+  if(!Voice.on || !m || m.from===me) return;
+  if(m.t==='bye'){ voiceDrop(m.from); return; }
+  if(m.t!=='hello') return;
+  const old=Voice.peers.get(m.from);
+  if(old && old.sid && m.sid && old.sid!==m.sid) voiceDrop(m.from,true);   // the other player rejoined: start over
+  const known=Voice.peers.has(m.from);
+  const v=voicePeer(m.from,m.name);
+  if(m.sid) v.sid=m.sid;
+  if(!known) voiceRefresh();
+  if(me<m.from && !v.offered){
+    v.offered=true;
+    try{
+      await v.pc.setLocalDescription(await v.pc.createOffer({offerToReceiveAudio:true}));
+      await voiceGathered(v.pc);
+      db.raw.publish(`voice/${Voice.code}/to/${m.from}`,{t:'offer',from:me,sid:Voice.sid,name:myNick||'Joueur',sdp:{type:v.pc.localDescription.type,sdp:v.pc.localDescription.sdp}});
+    }catch(e){ v.offered=false; }
+  }
+}
+async function voiceOnSignal(m){
+  if(!Voice.on || !m || m.from===me) return;
+  try{
+    if(m.t==='offer'){
+      if(Voice.peers.has(m.from)) voiceDrop(m.from,true);   // an offer always starts a fresh call
+      const v=voicePeer(m.from,m.name); if(m.sid) v.sid=m.sid;
+      await v.pc.setRemoteDescription(m.sdp);
+      await v.pc.setLocalDescription(await v.pc.createAnswer());
+      await voiceGathered(v.pc);
+      db.raw.publish(`voice/${Voice.code}/to/${m.from}`,{t:'answer',from:me,sdp:{type:v.pc.localDescription.type,sdp:v.pc.localDescription.sdp}});
+    } else if(m.t==='answer'){
+      const v=Voice.peers.get(m.from);
+      if(v && v.pc.signalingState==='have-local-offer') await v.pc.setRemoteDescription(m.sdp);
+    }
+  }catch(e){ console.warn('vocal',e); }
+  voiceRefresh();
 }
 
 /* ======================= Boot ======================= */
