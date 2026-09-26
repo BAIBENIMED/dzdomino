@@ -280,6 +280,7 @@ table.stats tr.me td{color:var(--ochre);font-weight:700}
 <body>
 <div class="wrap" id="app"></div>
 <div class="toast" id="toast" hidden></div>
+<p style="text-align:center;font-size:11px;color:#6f8c85;margin:0 0 14px">DZ Domino · version 26-09 vocal</p>
 
 <script>
 /* ======================= Jeu en ligne (serveur MQTT public, sans compte) ======================= */
@@ -1076,7 +1077,7 @@ function renderLobby(){
       aiCard(),
       h('div',{class:'card'},
         h('h2',{text:'Jouer avec des amis'}),
-        h('p',{class:'muted',text:'Sans compte : créez une table et envoyez le lien ou le code à vos trois amis. Chacun choisit sa place : les places 1 et 3 forment une équipe, 2 et 4 l’autre. Une place vide peut être prise par l’IA.'}),
+        h('p',{class:'muted',text:'Sans compte : créez une table et envoyez le lien ou le code à vos trois amis. À la table, touchez « 🎤 Vocal » pour vous parler en direct. Chacun choisit sa place : les places 1 et 3 forment une équipe, 2 et 4 l’autre. Une place vide peut être prise par l’IA.'}),
         h('div',{class:'field'},
           h('label',{class:'lab',for:'nick',text:'Votre nom (obligatoire), vu par les autres joueurs'}),
           h('input',{class:'nick',id:'nick',maxlength:'20',placeholder:profileName||'Votre prénom',value:myNick,autocomplete:'nickname',oninput:e=>saveNick(e.target.value)})),
@@ -1465,7 +1466,7 @@ function renderTableInner(app){
     localMode? h('span',{class:'tcode',text:`IA · ${levelName(s.level)}`,style:'letter-spacing:.06em'}) :
       h('button',{class:'tcode',title:'Inviter des amis (copier le lien)',onclick:()=>shareInvite(code),text:code}),
     soundBtn(),
-    (!localMode && db && my>=0) ? voiceBtns() : null,
+    localMode ? null : voiceBtns(my),
     h('span',{class:'grow'}),
     h('div',{class:'scores'},scoreEls));
   const kids=[top];
@@ -1856,7 +1857,8 @@ function voiceName(id){
   if(p>=0) return nameOf(p);
   const v=Voice.peers.get(id); return (v && v.name) || 'Joueur';
 }
-function voiceBtns(){
+function voiceBtns(my){
+  if(!Voice.on && (my<0 || !db)) return h('button',{class:'btn ghost small',title:'Vocal',onclick:()=>toast(!db?'Vocal indisponible : pas de connexion au serveur du jeu.':'Asseyez-vous à une place pour utiliser le vocal.'),text:'🎤 Vocal'});
   if(!Voice.on) return h('button',{class:'btn ghost small',title:'Parler avec les joueurs de la table',onclick:voiceJoin,text:'🎤 Vocal'});
   return h('button',{class:'btn small'+(Voice.muted?' ghost':''),title:Voice.muted?'Réactiver mon micro':'Couper mon micro',onclick:voiceToggleMute,text:Voice.muted?'🔇 Micro coupé':'🎤 Micro ouvert'});
 }
